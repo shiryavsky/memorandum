@@ -1,0 +1,247 @@
+# Memorandum Message Collector Configuration
+# Keep this file out of version control (add to .gitignore)
+
+sqlite_path: "data/messages.db"
+chroma_path: "data/chroma"
+
+# Embedding model for the vector store (semantic search).
+# Omit the whole block to use the BGE-M3 defaults shown below.
+#
+# WARNING — switching the model after ingest:
+# A Chroma collection stores vectors of a fixed dimension. Pointing this at a
+# different model (or a different dim) silently breaks similarity search unless
+# every document is re-embedded. To swap safely, do ONE of:
+#   1) Change `collection_name` here to a fresh value — the old vectors stay
+#      untouched on disk, the new model populates a new collection.
+#   2) Stop ingest, delete `data/chroma/`, then re-ingest with the new model.
+#
+# Suggested models (FlagEmbedding-compatible):
+#   BAAI/bge-m3              — multilingual,  ~4GB on disk,  1024d (default)
+#   BAAI/bge-small-en-v1.5   — English-only,  ~130MB,         512d (fast / tight RAM)
+embedding:
+  model: "BAAI/bge-m3"
+  device: "cpu"            # "cpu", "cuda", or "mps"
+  use_fp16: true           # halves RAM on CPU/CUDA; ignored on MPS
+  max_length: 512          # token cap per text passed to the model
+  batch_size: 1            # raise on GPU for throughput
+  collection_name: "messages"
+
+# Named sources — each source is an independent connection with its own credentials and filters.
+# Multiple sources of the same type (e.g., two Mattermost instances) are fully supported.
+# Disable a source without removing it by setting enabled: false.
+sources:
+  company_mattermost:
+    type: mattermost
+    enabled: true
+    url: "https://mattermost.yourcompany.com"
+    token: "your-personal-access-token"
+    internal: true    # all senders from this source are company staff (marked internal)
+    allow_send: false # default; set true to let the send_message MCP tool post here (visible to others)
+    filters:
+      skip_channels:
+        - "off-topic"
+        - "random"
+      skip_senders:
+        - "webhook-bot"
+        - "github-bot"
+      skip_patterns:
+        - "^Reminder:"
+        - "joined the channel"
+
+  client_mattermost:
+    type: mattermost
+    enabled: false
+    url: "https://mattermost.client.com"
+    token: "another-token"
+    filters:
+      only_channels:
+        - "project-alpha"
+
+  work_telegram:
+    type: telegram
+    enabled: false
+    token: "123456:AABBccDDeeFFggHH..."   # from @BotFather
+    filters:
+      skip_senders:
+        - "spambot"
+      # only_channels: ["-1001234567890"]  # chat_ids to whitelist (empty = all)
+
+  work_pachca:
+    type: pachca
+    enabled: false
+    token: "your-personal-access-token"   # Automations → API in Pachca settings
+    filters:
+      skip_channels:
+        - "random"
+      skip_senders:
+        - "bot-user"
+      # only_channels: ["dev-team"]  # chat names to whitelist (empty = all)
+
+  # Email (IMAP). One IMAP login per source — point it at the account you read.
+  # Threading uses Message-ID / In-Reply-To / References (so `get_thread` just works).
+  # `send_message` for email sources DRAFTS into the Drafts folder via IMAP APPEND —
+  # it does NOT send via SMTP. You review the draft in your mail client and click Send.
+  work_email:
+    type: email
+    enabled: false
+    host: "imap.example.com"
+    port: 993                              # IMAPS; plain IMAP is not exposed in v1
+    username: "you@example.com"            # also used as the From address for drafts
+    password: "app-password-or-account-pwd"
+    # from_address: "you@example.com"     # override only if it differs from username
+    folders:
+      - "INBOX"
+      - "Sent"                             # include Sent so outgoing replies appear in threads
+    drafts_folder: "Drafts"                # provider-specific: "[Gmail]/Drafts", "INBOX.Drafts", ...
+    allow_send: false                      # set true to let send_message create drafts
+    # channel_names:                       # optional remap of folder → friendlier channel name
+    #   "INBOX/Project Alpha": "alpha-email"
+    filters:
+      skip_folders:
+        - "Spam"
+        - "Trash"
+      skip_subjects:                       # regex against the email Subject
+        - "^(Out of office|Auto-?Reply)"
+      skip_senders:                        # matches the From address as well as the display name
+        - "noreply@example.com"
+
+# Aliases for the current user (the person who reads the messages)
+# Used to detect messages directed at you via @mention or name mention
+#
+# Note on Telegram usernames: write the bare handle (e.g. "johnd"), NOT "@johnd".
+# The Bot API returns `username` without the leading "@", and that's what lands in the DB.
+# Run `./bin/memorandum aliases refresh` to see the exact strings used in your DB.
+my_aliases:
+  - "john"
+  - "johnd"
+  - "John Doe"
+
+# Agent-driven edits to user_aliases via MCP.
+# When true (the default), the agent can call the upsert_user_alias /
+# remove_user_alias / update_user_alias_strings MCP tools to grow this section
+# as it learns about people (role changes, new responsibilities, additional
+# handles). Edits land in the SAME `user_aliases:` block below and survive
+# restarts; `git diff config.yaml` shows the audit trail. Flip to `false` for
+# hand-only curation.
+#
+# Soft caps stop a runaway session from bloating the file. Override only if
+# you've genuinely outgrown the defaults.
+# allow_alias_edits: true
+# max_entries: 500              # total entries in the user_aliases list
+# max_aliases_per_entry: 50     # nicknames per person
+# max_list_fields: 50           # length of `responsible_for` and similar lists
+
+# Canonical identity aliases for other users
+# Unifies the same person appearing under different names across sources.
+# Set `internal: true` for company staff on sources that mix internal and external people
+# (e.g. Telegram/Pachca). Messages from anyone not internal are marked [external] in output.
+# The current user (my_aliases) is always treated as internal.
+# Write usernames as they appear in the DB — Telegram handles WITHOUT the leading "@".
+user_aliases:
+  - canonical_name: "Jane Smith"
+    internal: true
+    role: "Backend lead"                  # optional: free-text job/function
+    team: "Platform"                      # optional: free-text group
+    responsible_for: ["dev-pl", "PL-*"]   # optional: channels / project prefixes she owns
+    aliases:
+      - "jane"
+      - "jane.smith"
+      - "jsmith"
+  - canonical_name: "Bob Wilson"          # external (client) — no internal flag
+    role: "CTO @ Acme"
+    team: "Client / Acme"
+    aliases:
+      - "bob"
+      - "bwilson"
+  - canonical_name: "Alex Petrov"
+    internal: true
+    role: "Junior backend"
+    team: "Platform"
+    reports_to: "Jane Smith"              # optional: matched by another entry's canonical_name
+    aliases:
+      - "alex"
+      - "alex.petrov"
+
+# YouTrack issue-id detection. Both message links and channel names are parsed
+# using the same project_prefixes regex. Omit this section to disable detection
+# (URLs are still extracted as generic "other"; channel names get no issue ids).
+youtrack:
+  base_url: "https://youtrack.jetbrains.com/"
+  project_prefixes: [PROJ, DEMO]
+
+schedule_minutes: 15
+
+# Data retention / housekeeping.
+# OPT-IN: housekeeping does nothing unless you uncomment the `retention:` block
+# below. After each successful ingest, it prunes `messages` / `mentions` /
+# `sent_messages` / `ingest_runs` older than `retention_days`. Also fans out to
+# the vector store (chroma delete-by-id) and to the file cache (mark-and-sweep:
+# any cache file whose file_id is no longer referenced by ANY surviving message
+# is removed). `channels` and `senders` are NEVER pruned — they hold
+# incremental-sync state and historical identity needed by the read tools.
+#
+# WARNING — shrinking retention is destructive across threads:
+# If you drop retention_days mid-flight, threads can lose their root while
+# replies survive. `get_thread` will then return a partial conversation. The
+# alternative (keep all ancestors of any surviving message) makes pruning
+# unbounded, so this is by design — but it's worth knowing before you flip it
+# from 365 to 90.
+#
+#   retention_days: 0 / null         → disabled (same as omitting the block)
+#   retention_days: 365              → keep one year of data
+#   prune_interval_hours: 24         → only run housekeeping once per day even
+#                                      though ingest fires every 15 min
+#   file_cache_grace_minutes: 60     → don't sweep cache files younger than
+#                                      this. Protects a just-downloaded
+#                                      attachment (especially Pachca, whose
+#                                      URLs expire) from being reaped right
+#                                      after ingest writes it.
+#
+# Tip: preview before committing —  ./bin/memorandum prune  (dry-run by default)
+# retention:
+#   retention_days: 365
+#   prune_interval_hours: 24
+#   file_cache_grace_minutes: 60
+
+# Ingest concurrency. Each source's `fetch_messages` runs in its own thread —
+# fetches are I/O-bound (REST / IMAP roundtrips) so wall-clock = max(per-source
+# time) instead of sum. The enrich + insert + sender-cache passes that follow
+# stay strictly sequential (SQLite writes serialize at the file lock; the
+# embedding model isn't multi-thread-friendly).
+#
+#   fetch_workers: 0 / null / unset  → auto (one per enabled source, capped)
+#   fetch_workers: 1                  → strictly sequential (legacy behavior)
+#   fetch_workers: N                  → fixed pool of N workers
+#   max_fetch_workers                 → hard cap on the auto path (default 8)
+# ingest:
+#   fetch_workers: 0
+#   max_fetch_workers: 8
+
+# Timezone for displaying message timestamps (storage is always UTC)
+# Use any IANA timezone name: "UTC", "Europe/Moscow", "Europe/Berlin", "US/Eastern", etc.
+display_timezone: "UTC"
+
+# Text file extensions (content will be extracted and searchable)
+text_extensions:
+  - ".txt"
+  - ".md"
+  - ".log"
+  - ".json"
+  - ".lst"
+
+# Domains whose senders/recipients count as company staff by default.
+# Useful when the sender's email is known (Mattermost, Pachca, future IMAP) so
+# you don't have to list every colleague in `user_aliases`. Telegram has no
+# email and the rule simply doesn't fire there.
+#
+# Precedence — broadest → most specific (first match wins later in the list):
+#   1. source `internal:` flag      — coarse "everyone here is staff"
+#   2. internal_domains             — promotes matching emails
+#   3. per-alias `internal: true|false` in user_aliases — wins over both above
+#   4. my_aliases                   — the current user is always internal
+#
+# Matching is case-insensitive and exact-domain (no wildcards):
+#   "mycompany.com" matches alice@mycompany.com but NOT bob@dev.mycompany.com.
+# internal_domains:
+#   - "mycompany.com"
+#   - "subcompany.com"

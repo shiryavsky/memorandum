@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+ENV/
+env/
+.env
+
+# Data directory - contains sensitive data
+data/
+*.session  # Telegram session files
+data/file_cache/  # Cached file attachments
+
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Test / coverage artifacts (regenerated on every run)
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
+
+# Non-example config
+config.yaml
+
+# Agents
+.claude

@@ -1,0 +1,11 @@
+# Force users to pick one of our templates (or use Discussions for Q&A).
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Questions / usage help
+    url: https://github.com/shiryavsky/memorandum/discussions
+    about: |
+      For "how do I configure X" or "is this the right way to do Y" please
+      use Discussions instead — issues are for bugs and feature requests.
+  - name: 🔒 Security report
+    url: https://github.com/shiryavsky/memorandum/security/advisories/new
+    about: Vulnerabilities go through GitHub Security Advisories — never public issues.

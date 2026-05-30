@@ -1,0 +1,57 @@
+name: ✨ Feature request
+description: A new capability, MCP tool, or connector you'd like to see.
+title: "[feat] <one-line summary>"
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Memorandum is a personal aggregator — the most useful feature requests
+        describe a real workflow that's awkward today, not just a wish-list item.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: |
+        What are you trying to do that the system doesn't support cleanly?
+        Concrete example > abstract pitch.
+      placeholder: |
+        e.g. I want to see which channels I've been quiet in this week so I can
+        catch up. Today I'd have to run `summarize_channel` for each one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed shape (optional)
+      description: |
+        If you have a specific idea — MCP tool name + args, CLI verb, config key.
+        Skip this if you just have the problem and want to discuss the fix.
+      placeholder: |
+        e.g. New MCP tool `my_quiet_channels(hours: int = 168, threshold: int = 3)`
+        returning channels where I sent fewer than `threshold` messages.
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      description: Roughly how big do you think this is?
+      options:
+        - "Small (a new MCP tool / CLI flag — under a day)"
+        - "Medium (a new connector / data model addition — a few days)"
+        - "Large (an architectural change — needs design discussion)"
+        - "Not sure — let's discuss"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing issues and didn't find a duplicate.
+          required: true
+        - label: I've read the relevant section of `AGENTS.md` (or am happy to be pointed there).
+          required: true

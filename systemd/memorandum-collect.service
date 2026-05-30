@@ -1,0 +1,62 @@
+# Memorandum Message Collector - Systemd Service Unit
+# Deploy this file to: /etc/systemd/system/memorandum-collect.service
+#
+# This is a one-shot service that runs the ingest pipeline.
+# It is triggered by memorandum-collect.timer
+#
+# Installation:
+#   chmod +x bin/memorandum-sync
+#   sudo cp systemd/memorandum-collect.service /etc/systemd/system/
+#   sudo cp systemd/memorandum-collect.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now memorandum-collect.timer
+#
+# Manual control:
+#   systemctl start memorandum-collect    # Run immediately
+#   systemctl stop memorandum-collect.timer
+#   journalctl -u memorandum-collect -f  # View logs
+
+[Unit]
+Description=Memorandum Message Collector
+After=network-online.target
+Wants=network-online.target
+
+# Prevent running multiple instances simultaneously
+# The script itself also uses flock for additional safety
+RefuseManualStart=no
+RefuseManualStop=yes
+
+[Service]
+Type=oneshot
+
+# Working directory (adjust to your installation)
+WorkingDirectory=/home/hermes/memorandum
+
+# Path to the sync script
+ExecStart=/home/hermes/memorandum/bin/memorandum-sync
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+Environment=HOME=/home/hermes
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=no
+ReadWritePaths=/home/hermes/memorandum/data /var/log /tmp
+LockPersonality=true
+MemoryDenyWriteExecute=false
+PrivateTmp=false
+RestrictNamespaces=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=memorandum-collect
+
+# Resource limits
+MemoryMax=4G
+CPUQuota=50%
+
+[Install]
+WantedBy=multi-user.target

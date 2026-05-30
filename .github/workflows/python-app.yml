@@ -1,0 +1,70 @@
+# Lint + test + coverage for Memorandum.
+# See: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
+#
+# Notes:
+# - Python 3.11 is the minimum the project supports (setup.sh enforces it).
+# - We deliberately DO NOT install FlagEmbedding in CI. It pulls torch (~700MB)
+#   and a 4GB model on first use. The test suite mocks it everywhere
+#   (conftest.py replaces `storage.vector_store`; test_vector_store.py stubs
+#   FlagEmbedding via `sys.modules` before importing the real module).
+# - Soft flake8 pass uses `--exit-zero` (warnings only). The strict pass
+#   (E9, F63, F7, F82) is the actual gate.
+
+name: Python application
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies (without the heavy FlagEmbedding stack)
+        run: |
+          python -m pip install --upgrade pip
+          # Filter FlagEmbedding out of requirements.txt — it pulls torch and
+          # is fully mocked in the test suite.
+          grep -v -i '^FlagEmbedding' requirements.txt > requirements-ci.txt
+          pip install -r requirements-ci.txt
+          pip install -r requirements-dev.txt
+
+      - name: Lint with flake8 (strict — fails the build on real errors)
+        run: |
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+
+      - name: Lint with flake8 (soft — warnings only)
+        run: |
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+      - name: Test with pytest + coverage
+        run: |
+          pytest tests/ -v \
+            --cov=. \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            --ignore=storage/vector_store.py
+
+      - name: Upload coverage XML artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: ignore

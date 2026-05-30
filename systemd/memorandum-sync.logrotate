@@ -1,0 +1,22 @@
+# Logrotate config for Memorandum sync logs
+# Install with: sudo cp systemd/memorandum-sync.logrotate /etc/logrotate.d/memorandum-sync
+
+/var/log/memorandum-sync.log {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0644 root root
+}
+
+/home/*/memorandum/data/memorandum-sync.log {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0644 root root
+}

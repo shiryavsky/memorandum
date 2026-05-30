@@ -1,0 +1,68 @@
+name: 🐛 Bug report
+description: Something is misbehaving — wrong output, crash, regression.
+title: "[bug] <one-line summary>"
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. Memorandum is small enough
+        that a precise repro saves a real amount of triage round-trips.
+
+        Before submitting, please:
+        - Run `./bin/memorandum health --json` and have the output handy if relevant.
+        - Confirm you're on Python 3.11+ (the project doesn't support older).
+        - Check that you're on `main` and have run `pytest tests/` (any pre-existing failures?).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: One paragraph — what you did, what you expected, what you got instead.
+      placeholder: |
+        e.g. Ran `memorandum dashboard --once` against a fresh DB and the
+        Storage panel showed chroma_count=None even though the dir exists.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal commands. Redact any tokens / personal data first.
+      placeholder: |
+        1. `cp config.example.yaml config.yaml`
+        2. `./run_ingest.sh --hours 1`
+        3. `./bin/memorandum dashboard --once`
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: Python version, OS, source types you have configured (just the types — not the names or tokens).
+      placeholder: |
+        Python 3.11.7 on macOS 14
+        Sources: mattermost + email
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs (optional)
+      description: Last ~30 lines from the failing run. Strip tokens, chat names, real handles.
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing issues and didn't find a duplicate.
+          required: true
+        - label: I've stripped any tokens / chat content / personal data from logs and repros.
+          required: true

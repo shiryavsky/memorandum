@@ -1,0 +1,169 @@
+#!/bin/bash
+# Memorandum Message Sync Script
+# Usage: ./bin/memorandum-sync [--force] [--hours HOURS]
+#
+# This script is meant to be run by systemd timer or manually.
+# It acquires a lock to prevent overlapping runs.
+#
+# When called without --hours, calculates from schedule_minutes config.
+# When called with --hours, uses that value directly (for manual runs).
+
+set -euo pipefail
+
+# Lock file path
+LOCK_FILE="/tmp/memorandum-sync.lock"
+
+# Default settings
+FORCE=""
+CONFIG_PATH="config.yaml"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+
+# Log file path (use /var/log on Linux if writable, otherwise project dir)
+if [ -w "/var/log" ] && [ -d "/var/log" ]; then
+    LOG_FILE="/var/log/memorandum-sync.log"
+else
+    LOG_FILE="$PROJECT_DIR/data/memorandum-sync.log"
+fi
+
+# Ensure log directory exists
+mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+
+# Logging function - logs to both stdout and file
+log() {
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    local message="[$timestamp] $*"
+    echo "$message"
+    echo "$message" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+log_error() {
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    local message="[$timestamp] ERROR: $*"
+    echo "$message" >&2
+    echo "$message" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --force)
+            FORCE="--force"
+            shift
+            ;;
+        --hours)
+            HOURS="$2"
+            shift 2
+            ;;
+        --config)
+            CONFIG_PATH="$2"
+            shift 2
+            ;;
+        --help|-h)
+            echo "Usage: $0 [--force] [--hours HOURS] [--config CONFIG_PATH]"
+            echo ""
+            echo "Options:"
+            echo "  --hours HOURS   Hours back to fetch (default: auto from schedule_minutes)"
+            echo "  --force         Ignore saved channel state"
+            echo "  --config PATH   Path to config.yaml (default: config.yaml)"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
+    esac
+done
+
+cd "$PROJECT_DIR"
+
+# Check if virtual environment exists
+if [ ! -d ".venv" ]; then
+    log_error "Virtual environment not found. Run ./setup.sh first."
+    exit 1
+fi
+
+# Extract schedule_minutes from config.yaml (default to 15)
+SCHEDULE_MINUTES=$(python3 -c "
+import yaml
+try:
+    with open('$CONFIG_PATH') as f:
+        config = yaml.safe_load(f)
+    print(config.get('schedule_minutes', 15))
+except Exception:
+    print(15)
+" 2>/dev/null || echo "15")
+
+log "Schedule interval: ${SCHEDULE_MINUTES} minutes"
+log "Config: $CONFIG_PATH"
+
+# Calculate hours if not specified
+if [ -z "${HOURS:-}" ]; then
+    # Auto-calculate: use 2x schedule interval to avoid gaps
+    HOURS=$(python3 -c "print($SCHEDULE_MINUTES * 2 / 60.0)" 2>/dev/null || echo "0.5")
+    log "Hours: auto (${HOURS} hours based on schedule)"
+else
+    log "Hours: $HOURS (manual)"
+fi
+
+# Prevent HuggingFace model checks if model is cached
+if [ -n "${HOME:-}" ] && [ -d "$HOME/.cache/huggingface/hub/models--BAAI"* ] 2>/dev/null; then
+    export HF_HUB_OFFLINE=1
+fi
+
+# Portable lock acquisition using flock if available, otherwise simple PID lock
+acquire_lock() {
+    log "Acquiring sync lock..."
+
+    if command -v flock &>/dev/null; then
+        # Use flock if available (Linux)
+        exec 200>"$LOCK_FILE"
+        if ! flock -n 200; then
+            log_error "Another instance is already running (lock held)"
+            log_error "Lock file: $LOCK_FILE"
+            return 1
+        fi
+        log "Lock acquired (using flock)"
+    else
+        # Fallback: simple PID-based lock (works on macOS and Linux)
+        if [ -f "$LOCK_FILE" ]; then
+            local old_pid=$(cat "$LOCK_FILE" 2>/dev/null || echo "")
+            if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+                log_error "Another instance is already running (PID: $old_pid)"
+                log_error "Lock file: $LOCK_FILE"
+                return 1
+            fi
+            log "Stale lock file found, removing..."
+            rm -f "$LOCK_FILE"
+        fi
+        echo $$ > "$LOCK_FILE"
+        log "Lock acquired (PID: $$)"
+    fi
+    return 0
+}
+
+# Release lock
+release_lock() {
+    log "Releasing lock..."
+    rm -f "$LOCK_FILE" 2>/dev/null || true
+}
+
+# Acquire lock
+if ! acquire_lock; then
+    exit 2
+fi
+
+# Cleanup on exit
+trap release_lock EXIT INT TERM
+
+# Run ingest
+log "Fetching messages from last ${HOURS} hours..."
+
+if .venv/bin/python -m pipeline --hours "$HOURS" --config "$CONFIG_PATH" $FORCE; then
+    log "Sync completed successfully"
+    exit 0
+else
+    log_error "Sync failed with exit code $?"
+    exit 1
+fi
