@@ -41,3 +41,6 @@ config.yaml
 
 # Agents
 .claude
+
+# Local settings
+.local
