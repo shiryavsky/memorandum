@@ -1,4 +1,12 @@
 """MCP server exposing message collection tools to Claude."""
+import sys
+from pathlib import Path
+
+# Make the project root importable when this file is invoked directly
+# (e.g. via the MCP Inspector or `python mcp_server/server.py`). Must run
+# BEFORE any `from connectors. / pipeline. / storage. / config` imports.
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from connectors.telegram_connector import TelegramConnector
 from connectors.pachca_connector import PachcaConnector
 from connectors.mattermost_connector import MattermostConnector
@@ -17,14 +25,9 @@ from mcp.server.stdio import stdio_server
 from mcp.server import Server
 import asyncio
 import json
-import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Optional
 from zoneinfo import ZoneInfo
-
-# Add project root to Python path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 # Initialize server
