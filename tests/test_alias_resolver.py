@@ -38,6 +38,36 @@ def test_resolve_handles_empty_user_aliases():
     assert r.resolve("jane") == "jane"
 
 
+# ── resolve_known() ───────────────────────────────────────────────────────────
+
+def test_resolve_known_returns_canonical_for_alias():
+    r = _resolver()
+    assert r.resolve_known("jane") == "Jane Smith"
+
+
+def test_resolve_known_returns_canonical_when_input_is_the_canonical():
+    """Regression: when the canonical name is itself the handle people mention
+    (e.g. ``canonical_name: "john.doe"``), `resolve_known` must still recognise
+    it as a known identity — the old `resolved != lookup` heuristic in
+    pipeline/ingest.py used to return None here."""
+    r = AliasResolver(
+        [{"canonical_name": "john.doe", "aliases": ["John Doe"]}],
+        my_aliases=[],
+    )
+    assert r.resolve_known("john.doe") == "john.doe"
+    assert r.resolve_known("JOHN.DOE") == "john.doe"
+
+
+def test_resolve_known_returns_none_for_unknown():
+    r = _resolver()
+    assert r.resolve_known("alice") is None
+
+
+def test_resolve_known_returns_none_for_empty():
+    r = _resolver()
+    assert r.resolve_known("") is None
+
+
 # ── mentions_me() ─────────────────────────────────────────────────────────────
 
 def test_mentions_me_detects_alias_substring():

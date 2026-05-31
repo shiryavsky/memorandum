@@ -570,8 +570,7 @@ def _insert_mention_rows(db: Database, msg: dict, resolver: AliasResolver) -> No
             mentioned_canonical = None  # without a username we can't alias-resolve
         else:
             mentioned_sender_id = db.find_sender_id_by_username(source, lookup)
-            resolved = resolver.resolve(lookup)
-            mentioned_canonical = resolved if resolved != lookup else None
+            mentioned_canonical = resolver.resolve_known(lookup)
         rows.append({
             "message_id": msg["id"],
             "source": source,

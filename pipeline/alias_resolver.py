@@ -28,6 +28,12 @@ class AliasResolver:
     ):
         # alias (lowercased) → canonical_name
         self._map: dict[str, str] = {}
+        # lowercased canonical → original-case canonical. Lets `resolve_known`
+        # answer "yes, that handle IS the canonical itself" — a case the
+        # alias-only `_map` can't cover when users write things like
+        # `canonical_name: "john.doe"` and don't repeat the handle in
+        # `aliases:`.
+        self._canonicals: dict[str, str] = {}
         # canonical_name → True/False — present ONLY when the alias group
         # explicitly set `internal:`. Absent entries mean "no opinion".
         self._explicit_internal: dict[str, bool] = {}
@@ -38,6 +44,7 @@ class AliasResolver:
             for alias in group.get("aliases", []):
                 self._map[alias.lower()] = canonical
             if canonical:
+                self._canonicals[canonical.lower()] = canonical
                 if "internal" in group:
                     self._explicit_internal[canonical] = bool(group["internal"])
                 meta = {f: group[f] for f in _META_FIELDS if group.get(f)}
@@ -52,6 +59,23 @@ class AliasResolver:
     def resolve(self, sender: str) -> str:
         """Return canonical name for sender, or the original value if no alias matches."""
         return self._map.get(sender.lower(), sender)
+
+    def resolve_known(self, name: str) -> str | None:
+        """Return the canonical name if `name` is a known alias OR a canonical
+        itself; ``None`` if neither.
+
+        Unlike :py:meth:`resolve`, this can't be fooled by the case where the
+        input already equals the canonical (e.g. mention `@john.doe` against
+        config `canonical_name: "john.doe"`). Callers that need to distinguish
+        "unknown person" from "no normalization happened" should use this
+        method.
+        """
+        if not name:
+            return None
+        key = name.lower()
+        if key in self._map:
+            return self._map[key]
+        return self._canonicals.get(key)
 
     def is_domain_internal(self, email: str) -> bool:
         """Return True if the email's domain is in `internal_domains` (case-insensitive)."""
