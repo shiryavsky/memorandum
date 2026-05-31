@@ -32,7 +32,7 @@ DEFAULT_FILE_CACHE_GRACE_SECONDS = 3600  # 1h
 def run_housekeeping(
     db,
     vs,
-    file_cache_dir: str = "data/file_cache",
+    attachments_path: str = "data/attachments",
     retention_days: Optional[int] = None,
     prune_interval_hours: int = 24,
     file_cache_grace_seconds: int = DEFAULT_FILE_CACHE_GRACE_SECONDS,
@@ -45,7 +45,7 @@ def run_housekeeping(
         db: ``storage.db.Database``.
         vs: ``storage.vector_store.VectorStore`` or anything exposing
             ``delete_many(ids)`` (mock in tests; ``None`` to skip vector fan-out).
-        file_cache_dir: where attachments live; non-existent path is OK.
+        attachments_path: where message attachments live; non-existent path is OK.
         retention_days: keep messages younger than this. Falsy = disabled.
         prune_interval_hours: skip if a prune ran less than this many hours ago.
         file_cache_grace_seconds: don't sweep cache files younger than this
@@ -127,7 +127,7 @@ def run_housekeeping(
         # unlinking. The grace period applies to dry-run too so the projection
         # matches what a real run would touch right now.
         _, would_unlink = _file_cache_projection(
-            file_cache_dir, db, min_age_seconds=file_cache_grace_seconds,
+            attachments_path, db, min_age_seconds=file_cache_grace_seconds,
         )
         base["files_deleted"] = len(would_unlink)
         base["files_orphans_swept"] = len(would_unlink)  # dry-run can't distinguish; treat as orphans
@@ -183,7 +183,7 @@ def run_housekeeping(
         refs_after = db.referenced_file_ids()
         lost_refs = refs_before - refs_after
         orphans, retention_swept, freed_bytes = _file_cache_sweep(
-            file_cache_dir,
+            attachments_path,
             referenced=refs_after,
             retention_driven_ids=lost_refs,
             min_age_seconds=file_cache_grace_seconds,
@@ -213,7 +213,7 @@ def run_housekeeping(
 # ── file-cache mark-and-sweep ───────────────────────────────────────────────
 
 def _file_cache_sweep(
-    file_cache_dir: str,
+    attachments_path: str,
     referenced: set,
     retention_driven_ids: Optional[set] = None,
     min_age_seconds: int = DEFAULT_FILE_CACHE_GRACE_SECONDS,
@@ -224,7 +224,7 @@ def _file_cache_sweep(
     kept, even if the message that originally added it was just pruned.
 
     Args:
-        file_cache_dir: directory holding the `{file_id}{ext}` files.
+        attachments_path: directory holding the `{file_id}{ext}` files.
         referenced: set of file_ids referenced by surviving messages right now.
         retention_driven_ids: file_ids whose last surviving reference was just
             deleted by the SQL prune. A swept file whose stem is in this set
@@ -239,7 +239,7 @@ def _file_cache_sweep(
         retention totals match the dashboard's `files_orphans_swept` and
         `files_with_deleted_messages` keys.
     """
-    path = Path(file_cache_dir)
+    path = Path(attachments_path)
     if not path.exists():
         return 0, 0, 0
     retention_driven_ids = retention_driven_ids or set()
@@ -273,7 +273,7 @@ def _file_cache_sweep(
 
 
 def _file_cache_projection(
-    file_cache_dir: str,
+    attachments_path: str,
     db,
     min_age_seconds: int = DEFAULT_FILE_CACHE_GRACE_SECONDS,
 ) -> tuple[list, list]:
@@ -285,7 +285,7 @@ def _file_cache_projection(
     same grace period the real sweep enforces, so the projection matches what
     a real run at the same moment would do.
     """
-    path = Path(file_cache_dir)
+    path = Path(attachments_path)
     if not path.exists():
         return [], []
     # Dry-run uses the LIVE referenced-file-ids set (pre-prune state). That

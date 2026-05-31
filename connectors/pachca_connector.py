@@ -28,7 +28,7 @@ class PachcaConnector:
         db=None,
         default_limit: int = 200,
         text_extensions: set = None,
-        file_cache_dir: str = "data/file_cache",
+        attachments_path: str = "data/attachments",
         youtrack_cfg: dict = None,
     ):
         self.source_name = source_name
@@ -42,12 +42,12 @@ class PachcaConnector:
         self._db = db
         self._default_limit = default_limit
         self._text_extensions = text_extensions or set()
-        self._file_cache_dir = file_cache_dir
+        self._attachments_path = attachments_path
         self._youtrack_cfg = youtrack_cfg or {}
         self._user_cache: dict = {}
         self._me_id: Optional[int] = None
 
-        Path(file_cache_dir).mkdir(parents=True, exist_ok=True)
+        Path(attachments_path).mkdir(parents=True, exist_ok=True)
 
     # ── API helper ────────────────────────────────────────────────────────────
 
@@ -215,7 +215,7 @@ class PachcaConnector:
         if not url or file_id is None:
             return None
         ext = Path(name).suffix.lower()
-        cache_path = Path(self._file_cache_dir) / f"{file_id}{ext}"
+        cache_path = Path(self._attachments_path) / f"{file_id}{ext}"
         if cache_path.exists():
             return cache_path
         try:

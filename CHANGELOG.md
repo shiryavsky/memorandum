@@ -11,6 +11,52 @@ This document captures the WHY that doesn't fit in commit messages.
 
 ---
 
+## Attachments path is now configurable (renamed from "file cache")
+
+New top-level config key `attachments_path:` (parallel to `sqlite_path` /
+`chroma_path`) controls where downloaded message attachments live on disk.
+Default changed from `data/file_cache/` → `data/attachments/`. The internal
+parameter `file_cache_dir` was renamed `attachments_path` across all
+connectors and the housekeeping orchestrator for consistency.
+
+- **Why:** two problems with the old setup. (1) The path was undocumented
+  and partially hardcoded — `mcp_server/server.py::_get_attached_file` had
+  `Path("data/file_cache")` baked in, so the MCP server couldn't actually
+  read from a custom location even if you set it elsewhere. (2) The "cache"
+  naming implied it was safe to delete, but it isn't: Pachca file URLs
+  expire shortly after the message is posted, Telegram bot file URLs time
+  out after ~1 hour. Deleting the directory loses attachments referenced by
+  surviving messages.
+- **What changed:**
+  - `config.yaml` accepts `attachments_path: "data/attachments"` (new default).
+  - `_get_attached_file` in the MCP server now reads the config — bug fix.
+  - The 4 connectors take `attachments_path=` instead of `file_cache_dir=`.
+  - `run_housekeeping` takes `attachments_path=` instead of `file_cache_dir=`.
+  - Internal sweep helpers (`_file_cache_sweep`, `_file_cache_projection`,
+    `DEFAULT_FILE_CACHE_GRACE_SECONDS`) keep their names — they describe the
+    mark-and-sweep mechanism, not the data, and renaming had no user-visible
+    value. The `file_cache_grace_minutes:` retention config key likewise
+    stays — it's about the grace period, not the path.
+- **Migration for existing installs:** either rename the directory and rely
+  on the new default —
+
+  ```bash
+  mv data/file_cache data/attachments
+  ```
+
+  — or keep the old layout by pinning the path in `config.yaml`:
+
+  ```yaml
+  attachments_path: "data/file_cache"
+  ```
+
+- **Touchpoints:** `config.example.yaml`, `pipeline/ingest.py`,
+  `pipeline/housekeeping.py`, `cli/prune.py`, `mcp_server/server.py`, all 4
+  files in `connectors/`, the corresponding tests, `README.md`, `AGENTS.md`,
+  `connectors/CONTRIBUTING.md`.
+
+---
+
 ## CPU-only torch on Linux install
 
 `setup.sh` now pre-installs torch from the PyTorch CPU index

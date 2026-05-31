@@ -1627,10 +1627,10 @@ async def _get_attached_file(args: dict) -> list[TextContent]:
     if not file_id:
         return [TextContent(type="text", text="file_id is required.")]
 
-    cache_dir = Path("data/file_cache")
+    config = get_config()
+    cache_dir = Path(config.get("attachments_path", "data/attachments"))
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    config = get_config()
     text_extensions = set(config.get("text_extensions", [".txt", ".md", ".log", ".json", ".lst"]))
 
     # 1. Cache hit (any extension — covers both Mattermost and Telegram text files)

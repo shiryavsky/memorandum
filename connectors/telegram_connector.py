@@ -36,7 +36,7 @@ class TelegramConnector:
         chat_ids: list = None,
         db_callback: Callable = None,
         db=None,
-        file_cache_dir: str = "data/file_cache",
+        attachments_path: str = "data/attachments",
         text_extensions: set = None,
         youtrack_cfg: dict = None,
     ):
@@ -45,14 +45,14 @@ class TelegramConnector:
         self._chat_ids = set(str(c) for c in (chat_ids or []))
         self._db_callback = db_callback
         self._db = db
-        self._file_cache_dir = file_cache_dir
+        self._attachments_path = attachments_path
         self._text_extensions = text_extensions or DEFAULT_TEXT_EXTENSIONS
         self._bot_info: dict = {}
         self._sender_cache: dict[str, dict] = {}
         self._chat_desc_cache: dict[str, Optional[str]] = {}  # chat_id → description (or None)
         self._youtrack_cfg = youtrack_cfg or {}
 
-        Path(file_cache_dir).mkdir(parents=True, exist_ok=True)
+        Path(attachments_path).mkdir(parents=True, exist_ok=True)
 
     # ── API helpers ───────────────────────────────────────────────────────────
 
@@ -180,7 +180,7 @@ class TelegramConnector:
             content = resp.content
 
             ext = Path(name).suffix.lower() if name else ""
-            cache_path = Path(self._file_cache_dir) / f"{file_id}{ext}"
+            cache_path = Path(self._attachments_path) / f"{file_id}{ext}"
             with open(cache_path, "wb") as f:
                 f.write(content)
 

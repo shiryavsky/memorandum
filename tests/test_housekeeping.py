@@ -147,7 +147,7 @@ def test_vector_store_failure_does_not_abort_sql_prune(db, vs, cache_dir):
 
 def test_vs_none_skips_vector_fan_out(db, cache_dir):
     db.insert(_msg(id="src:old", timestamp="2024-01-01T00:00:00+00:00"))
-    r = run_housekeeping(db, vs=None, file_cache_dir=str(cache_dir),
+    r = run_housekeeping(db, vs=None, attachments_path=str(cache_dir),
                          retention_days=365, file_cache_grace_seconds=0, now=NOW)
     assert r["status"] == "ok"
     assert r["vectors_deleted"] == 0

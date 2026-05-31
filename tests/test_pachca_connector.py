@@ -410,7 +410,7 @@ def test_message_with_attachment_embeds_file_id_not_url(tmp_path):
     rsps.add(rsps.GET, f"{BASE}/users/1", json=_user_resp())
     rsps.add(rsps.GET, _FILE_URL, body=b"\xff\xd8\xff")  # image bytes
 
-    conn = _make_connector(file_cache_dir=str(tmp_path))
+    conn = _make_connector(attachments_path=str(tmp_path))
     conn.connect()
     text = conn.fetch_messages()["messages"][0]["text"]
     assert "see this" in text
@@ -428,7 +428,7 @@ def test_attachment_downloaded_to_cache_by_file_id(tmp_path):
     rsps.add(rsps.GET, f"{BASE}/users/1", json=_user_resp())
     rsps.add(rsps.GET, _FILE_URL, body=b"\xff\xd8\xff")
 
-    conn = _make_connector(file_cache_dir=str(tmp_path))
+    conn = _make_connector(attachments_path=str(tmp_path))
     conn.connect()
     conn.fetch_messages()
     assert (tmp_path / "3560.png").exists()
@@ -443,7 +443,7 @@ def test_attachment_only_message_is_not_empty(tmp_path):
     rsps.add(rsps.GET, f"{BASE}/users/1", json=_user_resp())
     rsps.add(rsps.GET, _FILE_URL, body=b"\xff\xd8\xff")
 
-    conn = _make_connector(file_cache_dir=str(tmp_path))
+    conn = _make_connector(attachments_path=str(tmp_path))
     conn.connect()
     msg = conn.fetch_messages()["messages"][0]
     assert msg["text"].strip() != ""
@@ -462,7 +462,7 @@ def test_text_attachment_inlined(tmp_path):
     rsps.add(rsps.GET, f"{BASE}/users/1", json=_user_resp())
     rsps.add(rsps.GET, "https://uploads.example/notes.txt?sig=z", body=b"hello from file")
 
-    conn = _make_connector(file_cache_dir=str(tmp_path), text_extensions={".txt"})
+    conn = _make_connector(attachments_path=str(tmp_path), text_extensions={".txt"})
     conn.connect()
     text = conn.fetch_messages()["messages"][0]["text"]
     assert "hello from file" in text

@@ -202,7 +202,7 @@ memorandum/
 ├── data/                    # Local storage (gitignored)
 │   ├── messages.db          # SQLite database
 │   ├── chroma/              # ChromaDB persistence
-│   └── file_cache/          # Downloaded file attachments
+│   └── attachments/         # Downloaded message attachments
 │
 ├── systemd/                         # Linux deployment
 │   ├── memorandum-collect.service   # Systemd oneshot service

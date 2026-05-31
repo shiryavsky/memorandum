@@ -4,6 +4,16 @@
 sqlite_path: "data/messages.db"
 chroma_path: "data/chroma"
 
+# Where message attachments live on disk. Despite the historical "cache" name in
+# code, this is durable storage — do NOT delete it:
+#   • Pachca file URLs expire shortly after the message is posted, so files
+#     downloaded at ingest are the only copy you have.
+#   • Telegram bot file URLs time out after ~1 hour.
+#   • Mattermost files are re-fetchable via API but only while they exist there.
+# Housekeeping sweeps unreferenced files automatically (see `retention:` below);
+# manual deletion can lose attachments referenced by surviving messages.
+attachments_path: "data/attachments"
+
 # Embedding model for the vector store (semantic search).
 # Omit the whole block to use the BGE-M3 defaults shown below.
 #

@@ -89,7 +89,7 @@ def __init__(
     db = None,                       # full DB for upsert_channel; None ⇒ read-only
     # Shared options.
     text_extensions: set = None,
-    file_cache_dir: str = "data/file_cache",
+    attachments_path: str = "data/attachments",
     youtrack_cfg: dict = None,
 ):
 ```

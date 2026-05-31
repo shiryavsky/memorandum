@@ -151,6 +151,7 @@ def run_ingest(
     db = Database(config["sqlite_path"])
     vs = VectorStore(config["chroma_path"], embedding=config.get("embedding"))
     text_extensions = set(config.get("text_extensions", [".txt", ".md", ".log", ".json", ".lst"]))
+    attachments_path = config.get("attachments_path", "data/attachments")
     youtrack_cfg = config.get("youtrack") or {}
 
     user_aliases, my_aliases = get_aliases(config)
@@ -195,6 +196,7 @@ def run_ingest(
                         only_channels=source_filters.get("only_channels"),
                         db_callback=db.get_channel if not force else None,
                         db=db,
+                        attachments_path=attachments_path,
                         text_extensions=text_extensions,
                         youtrack_cfg=youtrack_cfg,
                     )
@@ -216,6 +218,7 @@ def run_ingest(
                         chat_ids=source_filters.get("only_channels"),
                         db_callback=db.get_channel if not force else None,
                         db=db,
+                        attachments_path=attachments_path,
                         text_extensions=text_extensions,
                         youtrack_cfg=youtrack_cfg,
                     )
@@ -237,6 +240,7 @@ def run_ingest(
                         db_callback=db.get_channel if not force else None,
                         db=db,
                         text_extensions=text_extensions,
+                        attachments_path=attachments_path,
                         youtrack_cfg=youtrack_cfg,
                     )
                     connector.connect()
@@ -263,6 +267,7 @@ def run_ingest(
                         db_callback=db.get_channel if not force else None,
                         db=db,
                         text_extensions=text_extensions,
+                        attachments_path=attachments_path,
                         youtrack_cfg=youtrack_cfg,
                     )
                     connector.connect()
@@ -433,7 +438,7 @@ def run_ingest(
                 ret = get_retention_settings(config)
                 report = run_housekeeping(
                     db, vs,
-                    file_cache_dir=config.get("file_cache_dir", "data/file_cache"),
+                    attachments_path=attachments_path,
                     retention_days=ret["retention_days"],
                     prune_interval_hours=ret["prune_interval_hours"],
                     file_cache_grace_seconds=int(ret["file_cache_grace_minutes"]) * 60,

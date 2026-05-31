@@ -43,7 +43,7 @@ class MattermostConnector:
         only_channels: list = None,
         db_callback: Callable = None,
         db=None,
-        file_cache_dir: str = "data/file_cache",
+        attachments_path: str = "data/attachments",
         text_extensions: set = None,
         youtrack_cfg: dict = None,
     ):
@@ -57,7 +57,7 @@ class MattermostConnector:
             only_channels: If set, only fetch from these channels (empty = all)
             db_callback: Callback to get saved state: fn(source, channel_id) -> int|None
             db: Database instance for updating state
-            file_cache_dir: Directory to cache file contents
+            attachments_path: Directory where message attachments are stored on disk
             text_extensions: Set of file extensions to treat as text (e.g., {".txt", ".md"})
         """
         self.source_name = source_name
@@ -72,12 +72,11 @@ class MattermostConnector:
         self._only_channels = set(only_channels or [])
         self._db_callback = db_callback
         self._db = db
-        self._file_cache_dir = file_cache_dir
+        self._attachments_path = attachments_path
         self._text_extensions = text_extensions or DEFAULT_TEXT_EXTENSIONS
         self._youtrack_cfg = youtrack_cfg or {}
 
-        # Create file cache directory
-        Path(file_cache_dir).mkdir(parents=True, exist_ok=True)
+        Path(attachments_path).mkdir(parents=True, exist_ok=True)
 
     def _get(self, path: str, params: dict = None) -> dict | list:
         """Make GET request to Mattermost API."""
@@ -209,7 +208,7 @@ class MattermostConnector:
 
             # For text files, download and cache content
             if full_extension in self._text_extensions:
-                cache_path = Path(self._file_cache_dir) / (file_id + full_extension)
+                cache_path = Path(self._attachments_path) / (file_id + full_extension)
 
                 # Download full file if not cached
                 if not cache_path.exists():
@@ -299,22 +298,22 @@ class MattermostConnector:
             File content as string, or None if not cached
         """
         if extension:
-            cache_path = Path(self._file_cache_dir) / (file_id + extension)
+            cache_path = Path(self._attachments_path) / (file_id + extension)
         else:
             # Try to find file by checking common extensions
             for ext in self._text_extensions:
-                cache_path = Path(self._file_cache_dir) / (file_id + ext)
+                cache_path = Path(self._attachments_path) / (file_id + ext)
                 if cache_path.exists():
                     break
             else:
-                cache_path = Path(self._file_cache_dir) / file_id
+                cache_path = Path(self._attachments_path) / file_id
 
         if not cache_path.exists():
             # Download and save file
             try:
                 content, file_ext = self._download_file(file_id)
                 # Use extension from Content-Type header
-                cache_path = Path(self._file_cache_dir) / (file_id + file_ext) if file_ext else cache_path
+                cache_path = Path(self._attachments_path) / (file_id + file_ext) if file_ext else cache_path
                 with open(cache_path, 'wb') as f:
                     f.write(content)
                 # Return as text if possible

@@ -51,7 +51,7 @@ def run(
 
         report = run_housekeeping(
             db, vs,
-            file_cache_dir=config.get("file_cache_dir", "data/file_cache"),
+            attachments_path=config.get("attachments_path", "data/attachments"),
             retention_days=ret["retention_days"],
             prune_interval_hours=ret["prune_interval_hours"],
             file_cache_grace_seconds=int(ret["file_cache_grace_minutes"]) * 60,

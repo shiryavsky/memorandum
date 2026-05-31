@@ -69,7 +69,7 @@ All output includes permalinks (only for Telegram channel/supergroup chats — p
 - `url` (Mattermost only) and `token` (all types)
 - `filters`: per-source `skip_senders`, `skip_channels`, `only_channels`, `skip_patterns`
 
-Top-level keys: `sqlite_path`, `chroma_path`, `display_timezone`, `schedule_minutes`, `text_extensions`, `my_aliases`, `user_aliases`, `internal_domains` (list of bare email domains whose owners are treated as internal — promotes any sender/recipient whose email matches), `embedding` (optional model + tuning block — see README → "Swapping the embedding model"), `ingest` (optional concurrency block — `fetch_workers` and `max_fetch_workers`; see [Parallel fetch](#parallel-fetch) below), `youtrack` (optional: `base_url` + `project_prefixes` list — drives both message-URL classification and channel-name issue-id parsing via shared helpers in `pipeline.ingest`).
+Top-level keys: `sqlite_path`, `chroma_path`, `attachments_path`, `display_timezone`, `schedule_minutes`, `text_extensions`, `my_aliases`, `user_aliases`, `internal_domains` (list of bare email domains whose owners are treated as internal — promotes any sender/recipient whose email matches), `embedding` (optional model + tuning block — see README → "Swapping the embedding model"), `ingest` (optional concurrency block — `fetch_workers` and `max_fetch_workers`; see [Parallel fetch](#parallel-fetch) below), `youtrack` (optional: `base_url` + `project_prefixes` list — drives both message-URL classification and channel-name issue-id parsing via shared helpers in `pipeline.ingest`).
 
 ### Parallel fetch
 
@@ -112,7 +112,7 @@ Text documents are downloaded and shown inline. All other files are downloaded o
 ### Pachca
 Each `Message.files` entry is embedded inline as `[image: name, file_id=<id>]` (no long URL), so attachment-only messages are never blank. Because Pachca download URLs are signed and short-lived, the file is downloaded into the cache **at ingest** (while the URL is valid) as `{file_id}{ext}`, and `get_attached_file` serves it from cache by id. Text files also get their first 5KB inlined. File metadata (`id`, `name`, `file_type`) is kept in `raw.files`.
 
-Cache location: `data/file_cache/{file_id}{ext}` for all sources.
+Storage location: `data/attachments/{file_id}{ext}` for all sources (configurable via `attachments_path:` in `config.yaml`). Despite the historical "cache" naming inside the code, this is durable storage — Pachca / Telegram URLs expire, so deleting these files loses attachments permanently. Use `./bin/memorandum prune` for safe, content-addressed cleanup instead of manual deletion.
 
 ## Incremental Sync
 
@@ -188,12 +188,12 @@ Refresh defaults to 5s. `--once` renders a single frame and returns (handy for `
 
 ## Retention / housekeeping
 
-`pipeline/housekeeping.py::run_housekeeping(db, vs, file_cache_dir, retention_days, prune_interval_hours, dry_run=False)` is the single orchestrator. Lives on the same architectural pattern as `pipeline/health.py` — no MCP / no connector imports — so both the ingest end-of-run hook and the `memorandum prune` CLI route through it.
+`pipeline/housekeeping.py::run_housekeeping(db, vs, attachments_path, retention_days, prune_interval_hours, dry_run=False)` is the single orchestrator. Lives on the same architectural pattern as `pipeline/health.py` — no MCP / no connector imports — so both the ingest end-of-run hook and the `memorandum prune` CLI route through it.
 
 Cross-store fan-out, in order:
 1. SQLite transaction (`Database.prune(cutoff_iso)`): deletes mentions for old messages → messages → sent_messages → ingest_runs, atomically. Returns the deleted message-id list (the caller needs it for chroma).
 2. Chroma bulk delete (`VectorStore.delete_many(ids)`): chunked at 5000 ids per call. Per-chunk failures logged + degraded, never raised.
-3. File-cache mark-and-sweep: `Database.referenced_file_ids()` regex-scans `messages.text` for `file_id=<...>` markers in the post-prune state; any file in `data/file_cache/` whose stem isn't in that set is unlinked. Content-addressed safe — a file_id referenced by ANY surviving message is kept.
+3. Attachments mark-and-sweep: `Database.referenced_file_ids()` regex-scans `messages.text` for `file_id=<...>` markers in the post-prune state; any file in `attachments_path` (default `data/attachments/`) whose stem isn't in that set is unlinked. Content-addressed safe — a file_id referenced by ANY surviving message is kept.
 4. `Database.record_prune_run(...)` writes the audit row.
 
 `channels` / `senders` / `sender_aliases` are NEVER pruned (they carry incremental-sync state and historical identity). The vector store and file cache are caller-orchestrated outside the SQL transaction — that way chroma or filesystem misbehavior never blocks the atomic SQL prune.

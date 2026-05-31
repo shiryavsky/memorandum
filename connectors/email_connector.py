@@ -74,7 +74,7 @@ class EmailConnector:
         db_callback: Optional[Callable] = None,
         db=None,
         text_extensions: Optional[set] = None,
-        file_cache_dir: str = "data/file_cache",
+        attachments_path: str = "data/attachments",
         youtrack_cfg: Optional[dict] = None,
     ):
         self.host = host
@@ -92,10 +92,10 @@ class EmailConnector:
         self._db_callback = db_callback
         self._db = db
         self._text_extensions = text_extensions or set()
-        self._file_cache_dir = file_cache_dir
+        self._attachments_path = attachments_path
         self._youtrack_cfg = youtrack_cfg or {}
 
-        Path(file_cache_dir).mkdir(parents=True, exist_ok=True)
+        Path(attachments_path).mkdir(parents=True, exist_ok=True)
         self._mailbox: Optional[MailBox] = None
         # address (lowercased) → display name seen on a recent From header.
         # Populated during _normalize; consumed by get_sender_info so the
@@ -398,7 +398,7 @@ class EmailConnector:
         except Exception:
             payload = b""
         file_id = hashlib.sha1(payload).hexdigest()[:24] if payload else uuid.uuid4().hex[:24]
-        cache_path = Path(self._file_cache_dir) / f"{file_id}{ext}"
+        cache_path = Path(self._attachments_path) / f"{file_id}{ext}"
         try:
             if payload and not cache_path.exists():
                 cache_path.write_bytes(payload)
