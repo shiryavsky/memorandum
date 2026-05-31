@@ -45,43 +45,17 @@ pip install -r requirements.txt
 echo "Creating data directory..."
 mkdir -p data
 
-# Create config.yaml from template if it doesn't exist
+# Create config.yaml from the example template if it doesn't exist.
+# config.example.yaml is the source of truth — keeping a separate inline
+# template in this script means the two drift apart on every new key.
 if [ ! -f config.yaml ]; then
-    echo "Creating config.yaml..."
-    cat > config.yaml << 'EOF'
-# Memorandum Message Collector Configuration
-sqlite_path: "data/messages.db"
-chroma_path: "data/chroma"
-
-# Telegram - TODO: Implement connector when ready
-# telegram:
-#   enabled: false
-#   api_id: 123456
-#   api_hash: "abc123..."
-#   session_name: "data/telegram"
-
-# Mattermost - Active implementation
-mattermost:
-  enabled: true
-  url: "https://mattermost.yourcompany.com"
-  token: "your-personal-access-token"
-
-filters:
-  skip_sources: []
-  skip_senders:
-    - "webhook-bot"
-    - "github-bot"
-  skip_channels:
-    - "random"
-    - "off-topic"
-  only_channels: []
-  skip_patterns:
-    - "^Reminder:"
-    - "joined the channel"
-
-schedule_minutes: 15
-EOF
-    echo "Created config.yaml - please edit it with your credentials"
+    if [ -f config.example.yaml ]; then
+        echo "Creating config.yaml from config.example.yaml..."
+        cp config.example.yaml config.yaml
+        echo "Created config.yaml - please edit it with your credentials"
+    else
+        echo "Warning: config.example.yaml not found, skipping config.yaml bootstrap."
+    fi
 fi
 
 echo ""

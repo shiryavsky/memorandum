@@ -9,7 +9,10 @@ Run:
     memorandum dashboard --refresh 10     # every 10s
     memorandum dashboard --once           # render one frame and exit
 """
+import sys
+import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -25,6 +28,57 @@ from rich.text import Text
 from config import load_config
 from pipeline import dashboard as data
 from storage.db import Database
+
+# termios/tty are POSIX-only — Windows runs fall back to Ctrl-C as the
+# sole exit path. The dashboard target platforms are macOS + Linux, so this
+# is fine; we just avoid an ImportError at module load.
+try:
+    import termios
+    import tty
+    _HAVE_TTY = True
+except ImportError:
+    _HAVE_TTY = False
+
+
+@contextmanager
+def _quit_on_q():
+    """Yield a ``threading.Event`` that fires when the user presses ``q`` / ``Q``.
+
+    Puts stdin in cbreak mode so a single keystroke (no Enter) ends the loop,
+    and runs a daemon thread that watches stdin. Restores the original termios
+    settings on exit. When stdin isn't a TTY (CI, piped output, ``--once``)
+    the event is never set — callers still have Ctrl-C as the universal exit.
+    """
+    event = threading.Event()
+    old_termios = None
+    if _HAVE_TTY and sys.stdin.isatty():
+        try:
+            fd = sys.stdin.fileno()
+            old_termios = termios.tcgetattr(fd)
+            tty.setcbreak(fd)
+        except Exception:
+            old_termios = None
+    if old_termios is not None:
+        def _watch():
+            try:
+                while not event.is_set():
+                    ch = sys.stdin.read(1)
+                    if not ch:
+                        return
+                    if ch.lower() == "q":
+                        event.set()
+                        return
+            except Exception:
+                pass
+        threading.Thread(target=_watch, daemon=True).start()
+    try:
+        yield event
+    finally:
+        if old_termios is not None:
+            try:
+                termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old_termios)
+            except Exception:
+                pass
 
 
 # ── small utilities ──────────────────────────────────────────────────────────
@@ -463,7 +517,7 @@ def run(
     no_color: bool = False,
     mock: bool = False,
 ) -> None:
-    """Launch the dashboard. Ctrl-C exits cleanly.
+    """Launch the dashboard. Press ``q`` or Ctrl-C to exit.
 
     ``mock=True`` skips the DB / Chroma / config dance entirely and renders a
     hard-coded demo snapshot — useful for screenshots and README assets when
@@ -478,16 +532,17 @@ def run(
             console.print(rendered)
             return
         # Live loop — refreshes the uptime/clock but the data stays static.
-        with Live(rendered, console=console,
-                  refresh_per_second=max(1, int(round(1 / refresh))) if refresh else 4,
-                  screen=True, redirect_stderr=False, redirect_stdout=False) as live:
-            try:
-                while True:
-                    time.sleep(refresh)
+        try:
+            with _quit_on_q() as quit_event, Live(
+                rendered, console=console,
+                refresh_per_second=max(1, int(round(1 / refresh))) if refresh else 4,
+                screen=True, redirect_stderr=False, redirect_stdout=False,
+            ) as live:
+                while not quit_event.wait(refresh):
                     live.update(_render(_build_mock_snapshot(), started, refresh,
                                         "(mock)", tz, console))
-            except KeyboardInterrupt:
-                pass
+        except KeyboardInterrupt:
+            pass
         return
 
     config = load_config(config_path)
@@ -515,13 +570,12 @@ def run(
         if once:
             console.print(_render(_snapshot(), started, refresh, config_path, tz, console))
             return
-        with Live(
+        with _quit_on_q() as quit_event, Live(
             _render(_snapshot(), started, refresh, config_path, tz, console),
             console=console, refresh_per_second=max(1, int(round(1 / refresh))) if refresh else 4,
             screen=True, redirect_stderr=False, redirect_stdout=False,
         ) as live:
-            while True:
-                time.sleep(refresh)
+            while not quit_event.wait(refresh):
                 live.update(_render(_snapshot(), started, refresh, config_path, tz, console))
     except KeyboardInterrupt:
         # Quiet exit — no traceback.

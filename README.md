@@ -35,17 +35,24 @@ Add your message context to Claude, Opencode, OpenClaw, Hermes, Grok, and other 
 
 ## Quick Start
 
-### 1. Setup (macOS/Linux)
+### 1. Clone the repo
+
+```bash
+git clone https://github.com/shiryavsky/memorandum.git
+cd memorandum
+```
+
+### 2. Setup (macOS/Linux)
 
 ```bash
 ./setup.sh
 ```
 
-On Linux, `setup.sh` installs CPU-only PyTorch (FlagEmbedding's transitive dep) from the [PyTorch CPU index](https://download.pytorch.org/whl/cpu) so the ~1.3 GB CUDA bundle is skipped. macOS torch is already CPU.
+`setup.sh` creates a `.venv`, installs Python deps, and bootstraps `config.yaml` from `config.example.yaml` on first run. On Linux it pre-installs CPU-only PyTorch (FlagEmbedding's transitive dep) from the [PyTorch CPU index](https://download.pytorch.org/whl/cpu) so the ~1.3 GB CUDA bundle is skipped — macOS torch is already CPU.
 
-### 2. Configure
+### 3. Configure
 
-Copy `config.example.yaml` to `config.yaml` and add your sources:
+Edit `config.yaml` (created in step 2 from `config.example.yaml`) and add your sources:
 
 ```yaml
 sources:
@@ -101,13 +108,23 @@ user_aliases:
 
 Tip: after a few weeks of ingest, run `./bin/memorandum aliases refresh` to print stub entries for every sender not yet in `user_aliases`, sorted by message count and tagged with the source they came from. Paste the ones you care about and add `role`/`team`/`internal` by hand.
 
-### 3. First-time Ingest
+### 4. First-time Ingest
 
 ```bash
 ./run_ingest.sh --hours 720  # Fetch last 30 days
 ```
 
-### 4. Start Scheduler (runs every 15 minutes)
+### 5. Health check
+
+After the first ingest, verify everything wired up correctly — sources connected, messages stored, embeddings populated:
+
+```bash
+./bin/memorandum health
+```
+
+The same report is also available as a `get_health` MCP tool once the server is registered.
+
+### 6. Start Scheduler (runs every 15 minutes)
 
 **Linux with systemd (recommended for production):**
 ```bash
@@ -127,7 +144,7 @@ source .venv/bin/activate
 python -m pipeline.scheduler
 ```
 
-### 5. Register MCP Server
+### 7. Register MCP Server
 
 #### with Claude:
 
@@ -160,6 +177,16 @@ mcp_servers:
 ```
 
 The `--config` argument ensures the server finds config.yaml even when workdir doesn't work.
+
+### 8. (Optional) Live dashboard
+
+Once ingest is running on a schedule, the terminal TUI gives a one-screen view of storage, ingest health, mentions, send activity, and MCP tool usage — handy in a tmux pane:
+
+```bash
+./bin/memorandum dashboard
+```
+
+Refreshes every 5 seconds; quit with `q`.
 
 ## Project Structure
 
