@@ -30,6 +30,15 @@ source .venv/bin/activate
 # Install dependencies
 echo "Installing dependencies..."
 pip install --upgrade pip
+
+# On Linux, FlagEmbedding pulls torch with bundled CUDA wheels (~1.3 GB).
+# Pre-install CPU-only torch from the PyTorch CPU index so the CUDA wheels
+# (cudnn, nccl, cusparselt, etc.) are skipped. macOS torch is CPU by default.
+if [ "$(uname -s)" = "Linux" ]; then
+    echo "Installing CPU-only PyTorch (skipping CUDA bundle)..."
+    pip install --index-url https://download.pytorch.org/whl/cpu torch
+fi
+
 pip install -r requirements.txt
 
 # Create data directory

@@ -41,6 +41,8 @@ Add your message context to Claude, Opencode, OpenClaw, Hermes, Grok, and other 
 ./setup.sh
 ```
 
+On Linux, `setup.sh` installs CPU-only PyTorch (FlagEmbedding's transitive dep) from the [PyTorch CPU index](https://download.pytorch.org/whl/cpu) so the ~1.3 GB CUDA bundle is skipped. macOS torch is already CPU.
+
 ### 2. Configure
 
 Copy `config.example.yaml` to `config.yaml` and add your sources:

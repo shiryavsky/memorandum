@@ -11,6 +11,27 @@ This document captures the WHY that doesn't fit in commit messages.
 
 ---
 
+## CPU-only torch on Linux install
+
+`setup.sh` now pre-installs torch from the PyTorch CPU index
+(`https://download.pytorch.org/whl/cpu`) on Linux before resolving the rest
+of `requirements.txt`.
+
+- **Why:** `FlagEmbedding` depends on `torch`, and pip's default torch wheel
+  on Linux ships the full CUDA runtime bundle (cudnn, nccl, cusparselt,
+  cuda-toolkit, etc.) — ~1.3 GB of NVIDIA wheels that are dead weight on a
+  CPU-only server. First-run installs were pulling all of it down even
+  though Memorandum runs BGE-M3 fine on CPU.
+- **How:** a `uname -s` guard runs `pip install --index-url …/whl/cpu torch`
+  before `pip install -r requirements.txt`. Once CPU torch is satisfied, the
+  resolver doesn't fetch the bundled-CUDA wheel via FlagEmbedding's transitive
+  dep. macOS is untouched (torch there is already CPU).
+- **Migration for existing broken venvs:** `pip uninstall -y torch nvidia-* cuda-toolkit && pip install --index-url https://download.pytorch.org/whl/cpu torch && pip install -r requirements.txt`,
+  or wipe `.venv/` and re-run `./setup.sh`.
+- **Touchpoints:** `setup.sh`.
+
+---
+
 ## Live terminal dashboard
 
 `memorandum dashboard` — full-screen `rich` TUI refreshing every 5s, showing
