@@ -6,32 +6,50 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
-Add your message context to Claude, Opencode, OpenClaw, Hermes, Grok, and other AI assistants. A personal productivity system that aggregates messages from Mattermost, Telegram, Pachca, and IMAP email into a searchable vector database, exposed via an MCP server.
+**Read in:** English · [Deutsch](README.de.md) · [Русский](README.ru.md) · [简体中文](README.zh-CN.md)
+
+Stop digging through five chat clients to find what someone said last Tuesday. Memorandum aggregates **Mattermost, Telegram, Pachca, and IMAP email** into a local searchable database and exposes it as MCP tools — so **Claude, Gemini, Hermes**, and other MCP clients can answer questions across all your work conversations.
+
+## Ask Claude things like
+
+> *"Summarize what the platform team discussed about `PL-15491` this week."*
+>
+> *"Did anyone @-mention me about the migration yesterday?"*
+>
+> *"Find the spreadsheet Marina sent on Tuesday and pull the Q3 numbers."*
+>
+> *"Draft a reply to the last email from the customer about the launch date."*
+
+Memorandum runs locally — your messages and attachments never leave your machine, and the agent talks to them through MCP.
 
 ## Features
 
-- **Multi-source collection**: Multiple Mattermost instances, Telegram bots, Pachca workspaces, and IMAP mail accounts, each named independently
-- **Two-tier storage**: SQLite for structured metadata, ChromaDB for semantic search
-- **Incremental sync**: Per-channel cursors (Mattermost timestamp, Pachca newest-message-id) and global update offset (Telegram)
-- **Parallel fetch**: Sources are fetched concurrently via a thread pool — wall-clock collapses from sum-of-sources to max-of-sources. Per-source failure stays isolated; writes still serialize at the SQLite/embedding layer for correctness. Tune via `ingest.fetch_workers` (auto by default; `1` falls back to the legacy strictly-sequential path)
-- **Retention / housekeeping**: After each successful ingest, prune messages / mentions / sent_messages / ingest_runs older than `retention.retention_days` (default 365). Cross-store: SQLite transaction → chroma delete-by-id → file-cache mark-and-sweep (content-addressed safe — a file_id referenced by ANY surviving message is kept). `channels` and `senders` are never pruned. Operator-driven dry-run via `./bin/memorandum prune` (preview counts; `--commit` to actually delete). Throttled to once per `retention.prune_interval_hours` (default 24h) so it doesn't run every ingest cycle
-- **Live gap reads**: `get_new_messages` fetches messages newer than the DB straight from the source (all sources), so an agent sees the up-to-the-second tail of a channel
-- **File attachments**: Text files embedded inline during ingest; photos and binary files retrievable on demand via `get_attached_file`. File ids are shown inline in message text (Telegram, Pachca); Pachca files are cached at ingest since their URLs expire
-- **Per-source filters**: YAML rules per source — skip bots, channels, and patterns independently
-- **User aliases with role / team / relations**: Canonical identity mapping across sources, plus optional `role`, `team`, `reports_to`, and `responsible_for` on each entry — surfaced via `get_user_aliases` so the agent can ground who-is-who context early in a session
-- **Agent-writable user_aliases (memory layer about people)**: Three MCP tools (`upsert_user_alias`, `remove_user_alias`, `update_user_alias_strings`) let the agent persist things it learns about people (role change, new project ownership, additional handle) directly into `config.yaml` via `ruamel.yaml` round-trip — operator comments / key order survive. Default-on (`allow_alias_edits: true`); `my_aliases` is hard-refused as identity territory; soft caps prevent runaway growth. Audit trail = `git diff config.yaml`
-- **Internal/external senders**: Classify company staff vs. clients via (in order, broad→specific) a per-source `internal: true` flag, a top-level `internal_domains:` list (any email on those domains is internal — handy for IMAP), or a per-alias `internal: true|false` override; external senders are tagged `[external]` in output
-- **Channel descriptions**: Mattermost `purpose`/`header` and Telegram chat `description` captured at ingest and surfaced in `list_channels` / `summarize_channel` / `summarize_messages` so the agent knows what each channel is for
-- **YouTrack issue links**: Issue ids (e.g. `PL-15491`) parsed out of both message URLs and channel names; the `find_by_issue` tool returns everything referencing a given id
-- **Thread reconstruction**: Reply messages carry a `🧵 thread:{id}` marker in search results; pass it to `get_thread` to pull the full conversation (root + all replies)
-- **Mention graph**: Every `@username` / Pachca `<@id>` in a message body is extracted at ingest into a `mentions` table; `who_mentioned` answers "who pinged whom" with alias resolution (`target: "me"` for the current user)
-- **Email (IMAP)**: Mail accounts join the ingest pipeline as folder-per-channel sources. Threading uses `Message-ID` / `References` so `get_thread` returns the full conversation across folders (INBOX + Sent). Recipient-aware internal/external classification (a message is internal only when sender **and** every recipient is internal). `send_message` for an email source **drafts** a reply into the configured Drafts folder via IMAP APPEND — no SMTP setup needed; you review and click Send in your mail client
-- **Permalinks**: Every search result and digest entry links back to the original message
-- **MCP server**: Claude-accessible tools for search, summarize, digest, decisions, threads, issue lookup, and file access
-- **Send messages**: Opt-in `send_message` tool (all sources) gated by a per-source `allow_send` flag and a read-before-send guard — the act half of the read→act loop. Telegram business chats are supported automatically: the bot's `business_connection_id` is captured at ingest and reused on reply. Every send (success and failure) is logged to the `sent_messages` audit table
-- **CLI utilities**: `./bin/memorandum health` (ingest status), `./bin/memorandum aliases refresh` (append-only — emits stubs for senders not yet in `user_aliases`, with per-source breakdown; `--in-place` preserves comments via `ruamel.yaml`), `./bin/memorandum prune` (dry-run preview of retention pruning; `--commit` to actually delete), `./bin/memorandum dashboard` (live terminal TUI — storage / ingest / source health / mentions / send activity / MCP tool usage in one screen; refreshes every 5s)
+**Sources & sync**
+- Pulls from **Mattermost, Telegram, Pachca, and IMAP** — multiple accounts of each, named independently
+- Incremental sync per source; parallel fetch (per-source failure stays isolated)
+- Captures **file attachments at ingest** — critical for Pachca and Telegram, whose URLs expire
+- Per-source YAML filters: skip bots, channels, regex patterns
 
-![Dashboard Screenshort](assets/dashboard.png)
+**Search & retrieval**
+- **Two-tier storage** — SQLite for structured queries (sender / channel / time range), ChromaDB for semantic search
+- **Live gap reads** — `get_new_messages` hits the source directly, so the agent sees up-to-the-second tail of a channel
+- **Thread reconstruction** — `get_thread` returns root + all replies, including across IMAP folders
+- **YouTrack issue links** — issue ids parsed from URLs and channel names; `find_by_issue` returns everything referencing one
+- **Permalinks** on every result — click to jump back to the original message
+
+**People & identity**
+- **Cross-source aliases** with optional role / team / reports-to / responsible-for — the agent knows who's who from the first session
+- **Agent-writable aliases** — Claude can persist what it learns about people (role change, new project) directly into `config.yaml` (round-trip preserves your comments)
+- **Internal vs external** classification (source flag → email domain → per-alias override); external senders are tagged `[external]`
+- **Mention graph** — `who_mentioned` answers "who pinged me / Alice this week" with alias resolution
+
+**Operations**
+- **MCP server** with tools for search, summarize, digest, decisions, threads, issue lookup, and file access
+- **Send back** (opt-in, per-source gate) — Telegram business chats supported; email replies land in your Drafts folder for review
+- **Retention / housekeeping** — automatic pruning of old messages + vectors; content-addressed attachment sweep keeps anything still referenced
+- **CLI**: `./bin/memorandum {health, dashboard, aliases refresh, prune}` — live terminal TUI plus housekeeping tools
+
+For implementation details (architecture, schemas, sync internals), see [AGENTS.md](AGENTS.md).
 
 ## Quick Start
 
@@ -49,6 +67,8 @@ cd memorandum
 ```
 
 `setup.sh` creates a `.venv`, installs Python deps, and bootstraps `config.yaml` from `config.example.yaml` on first run. On Linux it pre-installs CPU-only PyTorch (FlagEmbedding's transitive dep) from the [PyTorch CPU index](https://download.pytorch.org/whl/cpu) so the ~1.3 GB CUDA bundle is skipped — macOS torch is already CPU.
+
+The default embedding model is multilingual — works well for English out of the box.
 
 ### 3. Configure
 
@@ -82,7 +102,7 @@ sources:
     filters:
       skip_channels: ["random"]
 
-display_timezone: "Europe/Moscow"   # timestamps in MCP output
+display_timezone: "America/New_York"   # timestamps in MCP output
 
 # Optional: classify YouTrack issue links and channel names like "PL-15491".
 # Omit this block to disable issue-id detection (URLs are still extracted as generic).
@@ -187,6 +207,8 @@ Once ingest is running on a schedule, the terminal TUI gives a one-screen view o
 ```
 
 Refreshes every 5 seconds; quit with `q`.
+
+![Dashboard Screenshort](assets/dashboard.png)
 
 ## Project Structure
 
