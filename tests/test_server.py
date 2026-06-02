@@ -674,17 +674,29 @@ def test_find_cached_file_matches_any_extension(tmp_path):
 
 def test_serve_file_content_text_returns_decoded():
     result = _serve_file_content(b"hello world", ".txt", {".txt"})
-    assert result == "hello world"
+    assert result["content"] == "hello world"
+    assert result["size"] == len(b"hello world")
+    assert result["content_type"] == "text/plain"
+    assert result["file_path"] is None
 
 
 def test_serve_file_content_binary_returns_base64():
     result = _serve_file_content(b"\xff\xd8\xff", ".jpg", {".txt"})
-    assert result.startswith("[base64]:")
+    assert result["content"].startswith("[base64]:")
+    assert result["content_type"] == "image/jpeg"
+    assert result["size"] == 3
 
 
 def test_serve_file_content_no_extension_returns_text():
     result = _serve_file_content(b"plain text", "", {".txt"})
-    assert result == "plain text"
+    assert result["content"] == "plain text"
+
+
+def test_serve_file_content_includes_resolved_file_path(tmp_path):
+    p = tmp_path / "img.jpg"
+    p.write_bytes(b"\xff\xd8\xff")
+    result = _serve_file_content(p.read_bytes(), ".jpg", {".txt"}, file_path=p)
+    assert result["file_path"] == str(p.resolve())
 
 
 # ── _try_telegram_download ────────────────────────────────────────────────────
@@ -706,8 +718,11 @@ def test_try_telegram_download_returns_text_for_text_file(tmp_path):
     )
 
     result = _try_telegram_download(token, file_id, tmp_path, {".txt"})
-    assert result == "hello from telegram"
-    assert (tmp_path / f"{file_id}.txt").exists()
+    cached = tmp_path / f"{file_id}.txt"
+    assert cached.exists()
+    assert result["content"] == "hello from telegram"
+    assert result["file_path"] == str(cached.resolve())
+    assert result["size"] == len(b"hello from telegram")
 
 
 @rsps_lib.activate
@@ -726,8 +741,11 @@ def test_try_telegram_download_returns_base64_for_photo(tmp_path):
     )
 
     result = _try_telegram_download(token, file_id, tmp_path, {".txt"})
+    cached = tmp_path / f"{file_id}.jpg"
     assert result is not None
-    assert result.startswith("[base64]:")
+    assert result["content"].startswith("[base64]:")
+    assert result["file_path"] == str(cached.resolve())
+    assert result["content_type"] == "image/jpeg"
 
 
 @rsps_lib.activate

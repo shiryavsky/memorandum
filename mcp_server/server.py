@@ -406,9 +406,11 @@ async def list_tools() -> list[Tool]:
                 "(e.g. '[photo, file_id=AgAC...]', '[image: pic.jpg, file_id=3560]'). "
                 "For Mattermost: file_id is found in message attachment metadata. "
                 "Pachca files are downloaded into the cache at ingest (their URLs expire), so they "
-                "are served from cache. "
-                "Returns text content for text files; base64-encoded content for binary files "
-                "(photos, PDFs, etc.). Downloads and caches on first access."
+                "are served from cache. Downloads and caches on first access. "
+                "Returns a JSON object with fields: "
+                "`file_path` (absolute path to the cached file on disk — pass directly to vision_analyze), "
+                "`size` (bytes), `content_type` (MIME type), and `content` (decoded text for text files, "
+                "`[base64]:<data>` for binary). On error, returns a plain-text error message instead of JSON."
             ),
             inputSchema={
                 "type": "object",
@@ -1564,18 +1566,27 @@ def _find_cached_file(cache_dir: Path, file_id: str) -> Optional[Path]:
     return None
 
 
-def _serve_file_content(content: bytes, ext: str, text_extensions: set) -> str:
+def _serve_file_content(content: bytes, ext: str, text_extensions: set,
+                        file_path: Optional[Path] = None) -> dict:
     import base64
+    import mimetypes
+
+    mime = mimetypes.guess_type(f"file{ext}")[0] or "application/octet-stream"
+
     if ext in text_extensions or not ext:
-        try:
-            return content.decode("utf-8", errors="ignore")
-        except Exception:
-            pass
-    b64 = base64.b64encode(content).decode("ascii")
-    return f"[base64]:{b64}"
+        body = content.decode("utf-8", errors="ignore")
+    else:
+        body = f"[base64]:{base64.b64encode(content).decode('ascii')}"
+
+    return {
+        "file_path": str(file_path.resolve()) if file_path else None,
+        "size": len(content),
+        "content_type": mime,
+        "content": body,
+    }
 
 
-def _try_telegram_download(token: str, file_id: str, cache_dir: Path, text_extensions: set) -> Optional[str]:
+def _try_telegram_download(token: str, file_id: str, cache_dir: Path, text_extensions: set) -> Optional[dict]:
     import requests
     try:
         resp = requests.get(
@@ -1597,14 +1608,15 @@ def _try_telegram_download(token: str, file_id: str, cache_dir: Path, text_exten
         file_resp.raise_for_status()
         content = file_resp.content
 
-        (cache_dir / f"{file_id}{ext}").write_bytes(content)
-        return _serve_file_content(content, ext, text_extensions)
+        cache_path = cache_dir / f"{file_id}{ext}"
+        cache_path.write_bytes(content)
+        return _serve_file_content(content, ext, text_extensions, file_path=cache_path)
     except Exception:
         return None
 
 
 def _try_mattermost_download(base_url: str, token: str, file_id: str,
-                             cache_dir: Path, text_extensions: set) -> Optional[str]:
+                             cache_dir: Path, text_extensions: set) -> Optional[dict]:
     import requests
     import mimetypes
     try:
@@ -1619,7 +1631,7 @@ def _try_mattermost_download(base_url: str, token: str, file_id: str,
 
         cache_path = cache_dir / (file_id + ext) if ext else cache_dir / file_id
         cache_path.write_bytes(content)
-        return _serve_file_content(content, ext, text_extensions)
+        return _serve_file_content(content, ext, text_extensions, file_path=cache_path)
     except Exception:
         return None
 
@@ -1640,9 +1652,10 @@ async def _get_attached_file(args: dict) -> list[TextContent]:
     cached = _find_cached_file(cache_dir, file_id)
     if cached:
         try:
-            return [TextContent(type="text", text=_serve_file_content(
-                cached.read_bytes(), cached.suffix.lower(), text_extensions
-            ))]
+            result = _serve_file_content(
+                cached.read_bytes(), cached.suffix.lower(), text_extensions, file_path=cached
+            )
+            return [TextContent(type="text", text=json.dumps(result))]
         except Exception as e:
             return [TextContent(type="text", text=f"Error reading cached file: {e}")]
 
@@ -1651,7 +1664,7 @@ async def _get_attached_file(args: dict) -> list[TextContent]:
         if src.get("type") == "telegram" and src.get("enabled", True) and src.get("token"):
             result = _try_telegram_download(src["token"], file_id, cache_dir, text_extensions)
             if result is not None:
-                return [TextContent(type="text", text=result)]
+                return [TextContent(type="text", text=json.dumps(result))]
 
     # 3. Try each enabled Mattermost source
     for src in config.get("sources", {}).values():
@@ -1660,7 +1673,7 @@ async def _get_attached_file(args: dict) -> list[TextContent]:
             result = _try_mattermost_download(src["url"], src["token"],
                                               file_id, cache_dir, text_extensions)
             if result is not None:
-                return [TextContent(type="text", text=result)]
+                return [TextContent(type="text", text=json.dumps(result))]
 
     return [TextContent(type="text", text=f"File '{file_id}' not found in cache or any configured source.")]
 
