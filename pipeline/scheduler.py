@@ -9,11 +9,32 @@ If SYSTEMD_MODE env var is set, functions will delegate to systemd instructions.
 """
 from .ingest import run_ingest
 from config import load_config
+import fcntl
 import logging
 import os
 import sys
 
 from datetime import datetime, timedelta, timezone
+
+
+# Same flock path bin/memorandum-sync uses, so a polling scheduler and a
+# manually-triggered sync can't race the SQLite/Chroma state.
+_LOCK_FILE = "/tmp/memorandum-sync.lock"
+
+
+def _acquire_lock(path: str = _LOCK_FILE):
+    """Try a non-blocking exclusive flock; return the file handle or None.
+
+    Returning None means another sync/reindex is in flight — caller should
+    skip this tick rather than queue up.
+    """
+    fp = open(path, "w")
+    try:
+        fcntl.flock(fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        fp.close()
+        return None
+    return fp
 
 
 def _is_systemd_mode() -> bool:
@@ -63,6 +84,12 @@ def create_scheduler(config_path: str = "config.yaml"):
 
     def scheduled_ingest():
         """Job function for scheduled ingestion."""
+        lock_fp = _acquire_lock()
+        if lock_fp is None:
+            logger.warning(
+                f"Another sync/reindex holds {_LOCK_FILE}; skipping this tick"
+            )
+            return
         # Small overlap (2x the interval) to avoid gaps
         since = datetime.now(timezone.utc) - timedelta(minutes=schedule_minutes * 2)
         try:
@@ -73,6 +100,8 @@ def create_scheduler(config_path: str = "config.yaml"):
             )
         except Exception as e:
             logger.error(f"Scheduled ingest failed: {e}")
+        finally:
+            lock_fp.close()  # releases flock
 
     return scheduled_ingest, schedule_minutes
 
