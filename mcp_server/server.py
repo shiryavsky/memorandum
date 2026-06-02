@@ -44,6 +44,8 @@ app = Server("message-collector")
 _db: Optional[Database] = None
 _vs: Optional[VectorStore] = None
 _config: Optional[dict] = None
+_resolver: Optional[AliasResolver] = None
+_resolver_config_id: Optional[int] = None  # id() of the config dict the resolver was built from
 _config_path: str = "config.yaml"
 
 
@@ -71,6 +73,28 @@ def get_config() -> dict:
     if _config is None:
         _config = load_config(_config_path)
     return _config
+
+
+def get_resolver() -> AliasResolver:
+    """Get or build the AliasResolver from the current config.
+
+    The cache key is ``id(config)`` rather than a bare nullable flag — when
+    ``_invalidate_config_cache`` swaps the dict (alias-write tools do this
+    after editing the YAML) the resolver rebuilds without anyone having
+    to remember to null it out. Same mechanic keeps tests honest: when a
+    test patches ``get_config`` to return a different mock dict, the
+    resolver follows.
+    """
+    global _resolver, _resolver_config_id
+    config = get_config()
+    if _resolver is None or _resolver_config_id != id(config):
+        user_aliases, my_aliases = get_aliases(config)
+        _resolver = AliasResolver(
+            user_aliases, my_aliases,
+            internal_domains=get_internal_domains(config),
+        )
+        _resolver_config_id = id(config)
+    return _resolver
 
 
 @app.list_tools()
@@ -910,9 +934,7 @@ async def _get_new_messages(args: dict) -> list[TextContent]:
                             text=f"No new messages in '{channel}' ({source}) since last ingest.")]
 
     # Classify internal/external live (these aren't ingested yet, so they carry no flag).
-    user_aliases, my_aliases = get_aliases(config)
-    resolver = AliasResolver(user_aliases, my_aliases,
-                             internal_domains=get_internal_domains(config))
+    resolver = get_resolver()
     source_is_internal = bool(src_cfg.get("internal", False))
     for m in messages:
         sender_id = m.get("sender_id") or ""
@@ -1079,8 +1101,8 @@ async def _who_mentioned(args: dict) -> list[TextContent]:
         return [TextContent(type="text", text="'target' is required ('me' or a name/alias).")]
 
     config = get_config()
-    user_aliases, my_aliases = get_aliases(config)
-    resolver = AliasResolver(user_aliases, my_aliases)
+    _, my_aliases = get_aliases(config)
+    resolver = get_resolver()
 
     if target.lower() == "me":
         if not my_aliases:
@@ -1176,7 +1198,7 @@ def _invalidate_config_cache() -> None:
     and if those paths changed in the new config the live handles would
     still point at the old files.
     """
-    global _config, _db, _vs
+    global _config, _db, _vs, _resolver, _resolver_config_id
     if _db is not None:
         try:
             _db.close()
@@ -1185,6 +1207,8 @@ def _invalidate_config_cache() -> None:
     _config = None
     _db = None
     _vs = None
+    _resolver = None
+    _resolver_config_id = None
 
 
 async def _upsert_user_alias(args: dict) -> list[TextContent]:
