@@ -11,6 +11,98 @@ This document captures the WHY that doesn't fit in commit messages.
 
 ---
 
+## Thread-safe `Database` (eliminates `SQLITE_MISUSE` under fan-out ingest)
+
+The `memorandum-collect` log was periodically showing `bad parameter or
+other API misuse` — that's SQLite errno 21 (`SQLITE_MISUSE`), surfaced when
+multiple threads use the same `sqlite3.Connection` without external
+serialization. We open a single connection in `Database.__init__` with
+`check_same_thread=False`, but the pipeline fans out per-source fetches via
+`ThreadPoolExecutor` in `pipeline/ingest.py`, and the connectors call
+`db.get_channel` / `db.upsert_channel` / `db.get_channel_row` / `db.get_by_ids`
+from inside `fetch_messages` — i.e. from the worker threads. When two
+workers hit `self.conn.execute()` at the same instant, sqlite3's
+cursor/statement state goes inconsistent and errno 21 fires. Intermittent
+because it only triggers on actual interleaving.
+
+- **Why a single lock and not per-thread connections:** the workload is
+  network-bound, the DB is not the bottleneck; a `RLock` is the smallest
+  diff that eliminates the race and keeps the existing call sites
+  untouched. WAL + `threading.local()` connections would be cleaner
+  long-term but require per-thread bootstrap and careful close semantics,
+  with no observable win at current scale.
+- **Why `RLock` not `Lock`:** several methods are reentrant —
+  `log_tool_call` calls `_prune_tool_calls` when the counter ticks over;
+  `get_or_fetch_sender` calls `get_sender` and `upsert_sender` in
+  sequence. Plain `Lock` would deadlock the moment a thread tries to
+  acquire it twice.
+- **What changed:**
+  - `storage/db.py`: added `_synchronized` decorator that takes
+    `self._lock`; applied to every method that touches `self.conn` (46 in
+    total). `_lock` is a `threading.RLock` created in `__init__` before
+    the connection is opened.
+  - `__exit__` now routes through `self.close()` (decorated) instead of
+    calling `self.conn.close()` directly, so context-manager teardown is
+    also serialized.
+- **`check_same_thread=False` is kept on purpose** — it suppresses
+  Python's safety assertion; the lock provides the actual thread safety.
+- **Verification:** 8 threads × 200 mixed read/write iterations completes
+  in ~0.5s with zero errors; without the lock the same pattern reliably
+  surfaces SQLITE_MISUSE on a loaded box. Full test suite (626 tests)
+  passes unchanged — the decorator wrapper preserves signatures via
+  `functools.wraps`.
+- **Touchpoints:** `storage/db.py`.
+
+---
+
+## Channel filter unifies id / name / display_name + `reindex-chroma`
+
+`search_messages` (semantic mode) was returning zero hits when a `channel`
+filter was passed — a 26K-vector Chroma collection somehow matched none of
+them. Two compounding bugs:
+
+1. `vector_store.insert` was writing `channel: ""` for every row. The
+   message dicts emitted by all four connectors carry `channel_id`, not
+   `channel`, so `msg.get("channel") or ""` always evaluated to the empty
+   string. Every embedding's `channel` metadata was therefore blank, and
+   any non-empty filter trivially excluded the entire collection.
+2. `_search_messages` was passing the user's `channel` argument through
+   verbatim. For Chroma the metadata key is the channel **id**, so a
+   user asking for `ekaterina.firsova` (a Mattermost `name`) or
+   `Ekaterina Firsova` (a `display_name`) couldn't possibly match — only
+   the raw id would. The keyword path's `db.search` had a similar gap:
+   its WHERE matched `display_name` and `name` but not `id`.
+
+- **Fix:**
+  - `vector_store.py`: fall back to `channel_id` so existing connector
+    output produces the right metadata on insert.
+  - `db.py`: extended `search()`'s channel clause to also match `c.id`
+    (mirroring `get_thread`); added `resolve_channel()` helper.
+  - `mcp_server/server.py`: resolve channel once at the top of
+    `_search_messages`, pinning `source` from the resolved row to
+    disambiguate cross-source name collisions. Both semantic and keyword
+    branches now use the canonical id.
+- **Operational consequence:** the insert-side fix only helps **new**
+  rows. The existing 26K embeddings still hold `channel: ""` until they
+  get re-embedded.
+- **New CLI verb — `./bin/memorandum reindex-chroma`:**
+  - Acquires the same `/tmp/memorandum-sync.lock` that
+    `bin/memorandum-sync` uses (via `fcntl.flock(LOCK_EX|LOCK_NB)`), so a
+    sync run blocks the reindex cleanly instead of racing it.
+  - `shutil.rmtree` on the configured `chroma_path`, then rebuilds
+    `VectorStore` and streams every row from SQLite directly with a raw
+    SELECT (no JOIN — the friendly `COALESCE(display_name, name,
+    channel_id)` that `db.search` synthesizes would otherwise leak into
+    the metadata). Combined with the insert-side fix, channel metadata
+    is now correct end-to-end.
+  - Exit codes: 0 ok, 1 partial (some rows failed), 2 lock held / config
+    missing.
+- **Touchpoints:** `storage/vector_store.py`, `storage/db.py`,
+  `mcp_server/server.py`, `cli/__main__.py`, `cli/reindex.py` (new),
+  README in 4 languages.
+
+---
+
 ## Attachments path is now configurable (renamed from "file cache")
 
 New top-level config key `attachments_path:` (parallel to `sqlite_path` /

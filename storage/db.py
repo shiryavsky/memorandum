@@ -1,7 +1,9 @@
 """SQLite database for message metadata storage."""
+import functools
 import re
 import sqlite3
 import json
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -136,6 +138,26 @@ CREATE INDEX IF NOT EXISTS idx_tool_calls_name      ON tool_calls(tool_name);
 """
 
 
+def _synchronized(fn):
+    """Hold ``self._lock`` for the whole call.
+
+    The single ``sqlite3.Connection`` we keep on ``self.conn`` is shared by
+    every Database method, but Python's ``sqlite3`` cursor/statement state is
+    not thread-safe even with ``check_same_thread=False`` — concurrent use
+    from the ingest's per-source ThreadPoolExecutor surfaces as
+    ``SQLITE_MISUSE`` (errno 21, "bad parameter or other API misuse"). Wrap
+    every method that touches ``self.conn`` with this decorator. ``_lock`` is
+    a reentrant lock so methods that call each other (e.g. ``log_tool_call``
+    → ``_prune_tool_calls``, ``get_or_fetch_sender`` → ``get_sender`` /
+    ``upsert_sender``) don't deadlock.
+    """
+    @functools.wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return fn(self, *args, **kwargs)
+    return wrapper
+
+
 class Database:
     """SQLite database for storing message metadata."""
 
@@ -152,6 +174,9 @@ class Database:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.path = path
         self.read_only = read_only
+        # Re-entrant lock: every public method that touches `self.conn` takes
+        # it via @_synchronized. See the decorator's docstring for the why.
+        self._lock = threading.RLock()
         if read_only:
             # One-shot writable connect: apply schema + migrations, then close
             # and reopen the real handle as read-only.
@@ -175,6 +200,7 @@ class Database:
         # Counter for amortized tool_calls pruning — see log_tool_call.
         self._tool_calls_since_prune = 0
 
+    @_synchronized
     def _migrate(self) -> None:
         """Add columns to existing tables that predate the current schema."""
         for col, ddl in [
@@ -195,12 +221,14 @@ class Database:
             except sqlite3.OperationalError:
                 pass
 
+    @_synchronized
     def exists(self, msg_id: str) -> bool:
         row = self.conn.execute(
             "SELECT 1 FROM messages WHERE id=?", (msg_id,)
         ).fetchone()
         return row is not None
 
+    @_synchronized
     def insert(self, msg: dict) -> bool:
         """Insert a new message. Returns True if inserted, False if duplicate."""
         cursor = self.conn.execute("""
@@ -227,6 +255,7 @@ class Database:
         self.conn.commit()
         return cursor.rowcount > 0
 
+    @_synchronized
     def resolve_channel(
         self, channel: str, source: Optional[str] = None
     ) -> Optional[dict]:
@@ -246,6 +275,7 @@ class Database:
         ).fetchone()
         return dict(row) if row else None
 
+    @_synchronized
     def search(
         self,
         query: Optional[str] = None,
@@ -301,6 +331,7 @@ class Database:
 
         return [dict(row) for row in rows]
 
+    @_synchronized
     def get_thread(self, thread_id: str, channel: Optional[str] = None,
                    limit: int = 50) -> list[dict]:
         """Return all messages in a thread (root + replies), ordered by timestamp.
@@ -329,6 +360,7 @@ class Database:
         """, params + [limit]).fetchall()
         return [dict(row) for row in rows]
 
+    @_synchronized
     def find_by_issue_id(self, issue_id: str, limit: int = 100) -> list[dict]:
         """Return messages referencing an issue id — either directly via ``raw.urls`` or
         indirectly via the channel name (``channels.extra.issue_ids``).
@@ -355,6 +387,7 @@ class Database:
         """, (like, like, limit)).fetchall()
         return [dict(row) for row in rows]
 
+    @_synchronized
     def get_by_ids(self, ids: list[str]) -> list[dict]:
         """Fetch full message rows (same columns as search()) for the given IDs."""
         if not ids:
@@ -373,6 +406,7 @@ class Database:
         """, ids).fetchall()
         return [dict(row) for row in rows]
 
+    @_synchronized
     def count(self, source: Optional[str] = None) -> int:
         if source:
             row = self.conn.execute(
@@ -384,6 +418,7 @@ class Database:
 
     # === Senders ===
 
+    @_synchronized
     def get_sender(self, source: str, sender_id: str) -> Optional[dict]:
         row = self.conn.execute(
             "SELECT * FROM senders WHERE source = ? AND sender_id = ?",
@@ -391,6 +426,7 @@ class Database:
         ).fetchone()
         return dict(row) if row else None
 
+    @_synchronized
     def upsert_sender(self, sender_info: dict) -> bool:
         from datetime import datetime, timezone
         self.conn.execute("""
@@ -411,6 +447,7 @@ class Database:
         self.conn.commit()
         return True
 
+    @_synchronized
     def get_or_fetch_sender(self, source: str, sender_id: str,
                             fetch_callback: callable = None) -> dict:
         sender = self.get_sender(source, sender_id)
@@ -435,6 +472,7 @@ class Database:
             }
         return sender
 
+    @_synchronized
     def find_sender_id_by_username(self, source: str, username: str) -> Optional[str]:
         """Look up a sender_id by (source, username). Case-insensitive on username."""
         if not source or not username:
@@ -445,6 +483,7 @@ class Database:
         ).fetchone()
         return row["sender_id"] if row else None
 
+    @_synchronized
     def get_senders(self, source: Optional[str] = None, limit: int = 100) -> list[dict]:
         if source:
             rows = self.conn.execute(
@@ -459,6 +498,7 @@ class Database:
 
     # === Aliases ===
 
+    @_synchronized
     def upsert_aliases(self, user_aliases: list[dict]) -> None:
         """Replace all alias mappings with the provided list (synced from config)."""
         self.conn.execute("DELETE FROM sender_aliases")
@@ -471,6 +511,7 @@ class Database:
                 )
         self.conn.commit()
 
+    @_synchronized
     def get_aliases(self) -> list[dict]:
         """Return all alias groups as [{canonical_name, aliases}] dicts."""
         rows = self.conn.execute(
@@ -483,6 +524,7 @@ class Database:
 
     # === Channels ===
 
+    @_synchronized
     def get_channel(self, source: str, channel_id: str) -> Optional[int]:
         """Return last_update_at timestamp for the channel (used for incremental sync)."""
         row = self.conn.execute(
@@ -491,6 +533,7 @@ class Database:
         ).fetchone()
         return row["last_update_at"] if row else None
 
+    @_synchronized
     def get_channel_row(self, source: str, channel_id: str) -> Optional[dict]:
         """Return the full channel row as a dict with `extra` parsed from JSON, or None."""
         row = self.conn.execute(
@@ -507,6 +550,7 @@ class Database:
                 result["extra"] = {}
         return result
 
+    @_synchronized
     def upsert_channel(self, channel_info: dict) -> None:
         """Insert or update channel metadata and sync state."""
         from datetime import datetime, timezone
@@ -542,6 +586,7 @@ class Database:
 
     # === Sent messages ===
 
+    @_synchronized
     def record_sent_message(self, sent: dict) -> int:
         """Log an outbound message (success or failure) for audit/debugging. Returns row id."""
         from datetime import datetime, timezone
@@ -564,6 +609,7 @@ class Database:
 
     # === Mentions ===
 
+    @_synchronized
     def insert_mentions(self, rows: list[dict]) -> int:
         """Bulk-insert mention rows. Returns number of rows inserted."""
         if not rows:
@@ -592,6 +638,7 @@ class Database:
         self.conn.commit()
         return len(payload)
 
+    @_synchronized
     def get_mentions(
         self,
         mentioned_canonical: Optional[str] = None,
@@ -647,6 +694,7 @@ class Database:
         """, params + [limit]).fetchall()
         return [dict(r) for r in rows]
 
+    @_synchronized
     def get_mentions_for_identity(
         self,
         canonicals: Optional[list[str]] = None,
@@ -720,6 +768,7 @@ class Database:
 
     # === Ingest runs ===
 
+    @_synchronized
     def record_ingest_run(self, run: dict) -> None:
         self.conn.execute("""
             INSERT INTO ingest_runs
@@ -736,6 +785,7 @@ class Database:
         ))
         self.conn.commit()
 
+    @_synchronized
     def get_last_ingest_run(self) -> Optional[dict]:
         row = self.conn.execute(
             "SELECT * FROM ingest_runs ORDER BY id DESC LIMIT 1"
@@ -746,6 +796,7 @@ class Database:
         result["errors"] = json.loads(result.get("errors") or "[]")
         return result
 
+    @_synchronized
     def get_source_health(self) -> list[dict]:
         """Return per-source message stats: oldest/last timestamp and count."""
         rows = self.conn.execute("""
@@ -770,6 +821,7 @@ class Database:
     # unit even when chroma or the filesystem misbehave.
     _FILE_ID_RE = re.compile(r"file_id=([A-Za-z0-9_\-]+)")
 
+    @_synchronized
     def referenced_file_ids(self) -> set:
         """Scan messages.text for inline `file_id=<...>` markers and return the set.
 
@@ -785,6 +837,7 @@ class Database:
             out.update(self._FILE_ID_RE.findall(row["text"] or ""))
         return out
 
+    @_synchronized
     def count_prune_candidates(self, cutoff_iso: str) -> dict:
         """Return what `prune(cutoff_iso)` WOULD delete without touching anything.
 
@@ -818,6 +871,7 @@ class Database:
             "runs_deleted": runs,
         }
 
+    @_synchronized
     def prune(self, cutoff_iso: str) -> dict:
         """Delete everything older than `cutoff_iso` in one transaction.
 
@@ -866,6 +920,7 @@ class Database:
             "runs_deleted": runs_deleted,
         }
 
+    @_synchronized
     def last_prune_at(self) -> Optional[str]:
         """Most recent successful prune's finished_at, or None if never pruned."""
         row = self.conn.execute(
@@ -873,6 +928,7 @@ class Database:
         ).fetchone()
         return row["fin"] if row and row["fin"] else None
 
+    @_synchronized
     def record_prune_run(self, payload: dict) -> int:
         """Append one row to prune_runs. Returns the new row id."""
         cur = self.conn.execute("""
@@ -898,6 +954,7 @@ class Database:
 
     # === Channels ===
 
+    @_synchronized
     def list_channels(self, source: Optional[str] = None) -> list[dict]:
         """Return known channels (id, source, name, display_name, channel_type) for discovery.
 
@@ -916,6 +973,7 @@ class Database:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    @_synchronized
     def get_channels(self, source: Optional[str] = None) -> list[str]:
         """Return list of channel display names."""
         if source:
@@ -938,6 +996,7 @@ class Database:
     _TOOL_CALLS_PRUNE_EVERY = 100
     _TOOL_CALLS_KEEP_DAYS = 30
 
+    @_synchronized
     def log_tool_call(
         self,
         tool_name: str,
@@ -975,6 +1034,7 @@ class Database:
             self._tool_calls_since_prune = 0
             self._prune_tool_calls()
 
+    @_synchronized
     def _prune_tool_calls(self) -> int:
         """Drop tool_calls rows older than _TOOL_CALLS_KEEP_DAYS. Best-effort."""
         import sys as _sys
@@ -993,6 +1053,7 @@ class Database:
     # === Dashboard read queries (TASK-026) ===
     # All SQL lives here so pipeline/dashboard.py stays pure formatting.
 
+    @_synchronized
     def latest_messages(self, limit: int = 15) -> list[dict]:
         """Most recent messages across all sources, newest first."""
         rows = self.conn.execute("""
@@ -1007,6 +1068,7 @@ class Database:
         """, (limit,)).fetchall()
         return [dict(r) for r in rows]
 
+    @_synchronized
     def top_channels_since(self, since_iso: str, limit: int = 10) -> list[dict]:
         """Channels with the most messages since `since_iso`, sorted desc."""
         rows = self.conn.execute("""
@@ -1022,6 +1084,7 @@ class Database:
         """, (since_iso, limit)).fetchall()
         return [dict(r) for r in rows]
 
+    @_synchronized
     def top_senders_since(self, since_iso: str, limit: int = 10) -> list[dict]:
         """Senders with the most messages since `since_iso`. Uses canonical_sender
         when available so aliases of the same person collapse into one row."""
@@ -1038,6 +1101,7 @@ class Database:
         """, (since_iso, limit)).fetchall()
         return [dict(r) for r in rows]
 
+    @_synchronized
     def messages_per_day(self, days: int = 30) -> list[dict]:
         """Daily counts for the trailing N days, oldest → newest.
 
@@ -1057,6 +1121,7 @@ class Database:
         """, (cutoff,)).fetchall()
         return [dict(r) for r in rows]
 
+    @_synchronized
     def hour_of_day_histogram(self, days: int = 14, tz_name: str = "UTC") -> list[int]:
         """Average messages per hour-of-day across the trailing N days.
 
@@ -1087,6 +1152,7 @@ class Database:
                 continue
         return buckets
 
+    @_synchronized
     def send_stats_since(self, since_iso: str) -> dict:
         """Counts for the sent_messages table since `since_iso`.
 
@@ -1114,6 +1180,7 @@ class Database:
             "per_source": per_source,
         }
 
+    @_synchronized
     def tool_call_stats_since(self, since_iso: str) -> list[dict]:
         """Per-tool aggregates since `since_iso`, sorted by total desc."""
         rows = self.conn.execute("""
@@ -1129,6 +1196,7 @@ class Database:
         """, (since_iso,)).fetchall()
         return [dict(r) for r in rows]
 
+    @_synchronized
     def recent_mentions_me(self, limit: int = 3) -> list[dict]:
         """Most recent messages flagged mentions_me=1, newest first."""
         rows = self.conn.execute("""
@@ -1143,6 +1211,7 @@ class Database:
         """, (limit,)).fetchall()
         return [dict(r) for r in rows]
 
+    @_synchronized
     def mentions_me_counts(self) -> dict:
         """Mentions-me counts for the last 1h / 24h / 7d windows."""
         from datetime import datetime, timedelta, timezone
@@ -1161,6 +1230,7 @@ class Database:
             out[key] = row["c"] if row else 0
         return out
 
+    @_synchronized
     def recent_ingest_runs(self, limit: int = 20) -> list[dict]:
         """Last N ingest_runs rows, newest first — used to compute cadence."""
         rows = self.conn.execute(
@@ -1173,6 +1243,7 @@ class Database:
             out.append(d)
         return out
 
+    @_synchronized
     def close(self) -> None:
         self.conn.close()
 
@@ -1180,4 +1251,4 @@ class Database:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.conn.close()
+        self.close()
