@@ -7,10 +7,7 @@ from pathlib import Path
 # BEFORE any `from connectors. / pipeline. / storage. / config` imports.
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from connectors.telegram_connector import TelegramConnector
-from connectors.pachca_connector import PachcaConnector
-from connectors.mattermost_connector import MattermostConnector
-from connectors.email_connector import EmailConnector
+from connectors.factory import build_connector
 from pipeline.alias_resolver import AliasResolver
 from pipeline.format import (
     ext_marker as _ext_marker,
@@ -818,43 +815,22 @@ async def _list_channels(args: dict) -> list[TextContent]:
 
 
 def _build_live_connector(source: str, src_cfg: dict, text_extensions: set):
-    """Build a read-only connector (db=None) for a live fetch, or None if unsupported."""
+    """Build a read-only connector (db=None) for a live fetch, or None if unsupported.
+
+    Email is the one exception: drafts need a writable handle to look up
+    parent messages for In-Reply-To headers, so it gets the real DB.
+    """
     source_type = src_cfg.get("type")
-    db_callback = get_db().get_channel
-    youtrack_cfg = get_config().get("youtrack") or {}
-    if source_type == "mattermost":
-        return MattermostConnector(
-            base_url=src_cfg["url"], token=src_cfg["token"], source_name=source,
-            db_callback=db_callback, db=None, text_extensions=text_extensions,
-            youtrack_cfg=youtrack_cfg,
-        )
-    if source_type == "pachca":
-        return PachcaConnector(
-            access_token=src_cfg["token"], source_name=source,
-            db_callback=db_callback, db=None, text_extensions=text_extensions,
-            youtrack_cfg=youtrack_cfg,
-        )
-    if source_type == "telegram":
-        return TelegramConnector(
-            bot_token=src_cfg["token"], source_name=source,
-            db_callback=db_callback, db=None, text_extensions=text_extensions,
-            youtrack_cfg=youtrack_cfg,
-        )
-    if source_type == "email":
-        # For send_message (drafts) we need a writable connector — the live-fetch
-        # path punts before reaching this constructor.
-        return EmailConnector(
-            host=src_cfg["host"], port=src_cfg.get("port", 993),
-            username=src_cfg["username"], password=src_cfg["password"],
-            source_name=source,
-            folders=src_cfg.get("folders"),
-            channel_names=src_cfg.get("channel_names"),
-            drafts_folder=src_cfg.get("drafts_folder", "Drafts"),
-            from_address=src_cfg.get("from_address"),
-            db_callback=db_callback, db=get_db(), text_extensions=text_extensions,
-            youtrack_cfg=youtrack_cfg,
-        )
-    return None
+    db_for_connector = get_db() if source_type == "email" else None
+    return build_connector(
+        source_type=source_type,
+        source_name=source,
+        src_cfg=src_cfg,
+        db=db_for_connector,
+        db_callback=get_db().get_channel,
+        text_extensions=text_extensions,
+        youtrack_cfg=get_config().get("youtrack") or {},
+    )
 
 
 async def _get_new_messages(args: dict) -> list[TextContent]:

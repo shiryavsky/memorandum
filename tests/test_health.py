@@ -199,7 +199,7 @@ def test_exit_code_no_run():
 # ── ingest run recording integration ─────────────────────────────────────────
 
 @patch("pipeline.ingest.VectorStore")
-@patch("pipeline.ingest.MattermostConnector")
+@patch("connectors.factory.MattermostConnector")
 def test_run_ingest_records_ok_run(MockMM, MockVS, tmp_path):
     import yaml
     from pipeline.ingest import run_ingest
@@ -228,7 +228,7 @@ def test_run_ingest_records_ok_run(MockMM, MockVS, tmp_path):
 
 
 @patch("pipeline.ingest.VectorStore")
-@patch("pipeline.ingest.MattermostConnector")
+@patch("connectors.factory.MattermostConnector")
 def test_run_ingest_records_partial_on_fetch_error(MockMM, MockVS, tmp_path):
     import yaml
     from pipeline.ingest import run_ingest
@@ -270,7 +270,7 @@ def test_run_ingest_records_error_when_all_sources_fail(MockVS, tmp_path):
     config_path = str(tmp_path / "config.yaml")
     (tmp_path / "config.yaml").write_text(yaml.dump(cfg))
 
-    with patch("pipeline.ingest.MattermostConnector") as MockMM:
+    with patch("connectors.factory.MattermostConnector") as MockMM:
         MockMM.side_effect = RuntimeError("Bad token")
         run_ingest(config_path=config_path)
 

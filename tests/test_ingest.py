@@ -70,7 +70,7 @@ def test_run_ingest_no_sources_returns_zeroed_stats(MockVS, tmp_path):
 # ── connector called, stats aggregated ───────────────────────────────────────
 
 @patch("pipeline.ingest.VectorStore")
-@patch("pipeline.ingest.MattermostConnector")
+@patch("connectors.factory.MattermostConnector")
 def test_run_ingest_calls_connector_and_aggregates_stats(MockMM, MockVS, tmp_path):
     config_path, _ = _write_config(tmp_path, sources={
         "mm_src": {"type": "mattermost", "url": "http://x", "token": "t", "enabled": True}
@@ -90,7 +90,7 @@ def test_run_ingest_calls_connector_and_aggregates_stats(MockMM, MockVS, tmp_pat
 # ── filter engine applied ─────────────────────────────────────────────────────
 
 @patch("pipeline.ingest.VectorStore")
-@patch("pipeline.ingest.MattermostConnector")
+@patch("connectors.factory.MattermostConnector")
 def test_run_ingest_filter_engine_reflected_in_stats(MockMM, MockVS, tmp_path):
     config_path, _ = _write_config(tmp_path, sources={
         "mm_src": {
@@ -119,7 +119,7 @@ def test_run_ingest_filter_engine_reflected_in_stats(MockMM, MockVS, tmp_path):
 # ── duplicate detection ───────────────────────────────────────────────────────
 
 @patch("pipeline.ingest.VectorStore")
-@patch("pipeline.ingest.MattermostConnector")
+@patch("connectors.factory.MattermostConnector")
 def test_run_ingest_duplicate_increments_duplicate_stat(MockMM, MockVS, tmp_path):
     config_path, _ = _write_config(tmp_path, sources={
         "mm_src": {"type": "mattermost", "url": "http://x", "token": "t", "enabled": True}
@@ -141,7 +141,7 @@ def test_run_ingest_duplicate_increments_duplicate_stat(MockMM, MockVS, tmp_path
 # ── VectorStore insert called for new messages only ──────────────────────────
 
 @patch("pipeline.ingest.VectorStore")
-@patch("pipeline.ingest.MattermostConnector")
+@patch("connectors.factory.MattermostConnector")
 def test_vector_store_insert_called_for_new_not_for_duplicates(MockMM, MockVS, tmp_path):
     config_path, _ = _write_config(tmp_path, sources={
         "mm_src": {"type": "mattermost", "url": "http://x", "token": "t", "enabled": True}
@@ -164,7 +164,7 @@ def test_vector_store_insert_called_for_new_not_for_duplicates(MockMM, MockVS, t
 # ── Pachca connector instantiated for type: pachca ────────────────────────────
 
 @patch("pipeline.ingest.VectorStore")
-@patch("pipeline.ingest.PachcaConnector")
+@patch("connectors.factory.PachcaConnector")
 def test_run_ingest_instantiates_pachca_connector(MockPA, MockVS, tmp_path):
     config_path, _ = _write_config(tmp_path, sources={
         "pa_src": {"type": "pachca", "token": "tok", "enabled": True}
@@ -187,7 +187,7 @@ def test_run_ingest_instantiates_pachca_connector(MockPA, MockVS, tmp_path):
 # ── alias resolution ──────────────────────────────────────────────────────────
 
 @patch("pipeline.ingest.VectorStore")
-@patch("pipeline.ingest.MattermostConnector")
+@patch("connectors.factory.MattermostConnector")
 def test_run_ingest_resolves_sender_to_canonical(MockMM, MockVS, tmp_path):
     user_aliases = [{"canonical_name": "Jane Smith", "aliases": ["jsmith", "jane"]}]
     config_path, _ = _write_config(
@@ -210,7 +210,7 @@ def test_run_ingest_resolves_sender_to_canonical(MockMM, MockVS, tmp_path):
 
 
 @patch("pipeline.ingest.VectorStore")
-@patch("pipeline.ingest.MattermostConnector")
+@patch("connectors.factory.MattermostConnector")
 def test_run_ingest_sets_mentions_me_flag(MockMM, MockVS, tmp_path):
     config_path, _ = _write_config(
         tmp_path,
@@ -234,7 +234,7 @@ def test_run_ingest_sets_mentions_me_flag(MockMM, MockVS, tmp_path):
 # ── internal / external classification ────────────────────────────────────────
 
 @patch("pipeline.ingest.VectorStore")
-@patch("pipeline.ingest.MattermostConnector")
+@patch("connectors.factory.MattermostConnector")
 def test_run_ingest_source_internal_flag_marks_messages(MockMM, MockVS, tmp_path):
     config_path, _ = _write_config(tmp_path, sources={
         "mm": {"type": "mattermost", "url": "http://x", "token": "t",
@@ -252,7 +252,7 @@ def test_run_ingest_source_internal_flag_marks_messages(MockMM, MockVS, tmp_path
 
 
 @patch("pipeline.ingest.VectorStore")
-@patch("pipeline.ingest.MattermostConnector")
+@patch("connectors.factory.MattermostConnector")
 def test_run_ingest_alias_internal_flag_marks_messages(MockMM, MockVS, tmp_path):
     config_path, _ = _write_config(
         tmp_path,
@@ -273,7 +273,7 @@ def test_run_ingest_alias_internal_flag_marks_messages(MockMM, MockVS, tmp_path)
 
 
 @patch("pipeline.ingest.VectorStore")
-@patch("pipeline.ingest.MattermostConnector")
+@patch("connectors.factory.MattermostConnector")
 def test_run_ingest_unflagged_sender_is_external(MockMM, MockVS, tmp_path):
     config_path, _ = _write_config(
         tmp_path,
@@ -296,7 +296,7 @@ def test_run_ingest_unflagged_sender_is_external(MockMM, MockVS, tmp_path):
 # ── mention extraction wiring ────────────────────────────────────────────────
 
 @patch("pipeline.ingest.VectorStore")
-@patch("pipeline.ingest.MattermostConnector")
+@patch("connectors.factory.MattermostConnector")
 def test_run_ingest_writes_mention_rows_for_new_messages(MockMM, MockVS, tmp_path):
     user_aliases = [{"canonical_name": "Bob Wilson", "aliases": ["bob"]}]
     config_path, _ = _write_config(
@@ -324,7 +324,7 @@ def test_run_ingest_writes_mention_rows_for_new_messages(MockMM, MockVS, tmp_pat
 
 
 @patch("pipeline.ingest.VectorStore")
-@patch("pipeline.ingest.MattermostConnector")
+@patch("connectors.factory.MattermostConnector")
 def test_run_ingest_no_duplicate_mention_rows_on_re_ingest(MockMM, MockVS, tmp_path):
     config_path, _ = _write_config(
         tmp_path,
@@ -345,7 +345,7 @@ def test_run_ingest_no_duplicate_mention_rows_on_re_ingest(MockMM, MockVS, tmp_p
 
 
 @patch("pipeline.ingest.VectorStore")
-@patch("pipeline.ingest.MattermostConnector")
+@patch("connectors.factory.MattermostConnector")
 def test_run_ingest_resolves_mentioned_sender_id_from_senders_table(MockMM, MockVS, tmp_path):
     """A pre-cached sender's @username mention should fill mentioned_sender_id."""
     config_path, _ = _write_config(
@@ -374,7 +374,7 @@ def test_run_ingest_resolves_mentioned_sender_id_from_senders_table(MockMM, Mock
 
 
 @patch("pipeline.ingest.VectorStore")
-@patch("pipeline.ingest.MattermostConnector")
+@patch("connectors.factory.MattermostConnector")
 def test_run_ingest_caches_senders_before_mention_insertion(MockMM, MockVS, tmp_path):
     """Regression: senders must be cached BEFORE messages are inserted, so that
     _insert_mention_rows → find_sender_id_by_username has data to match against.
@@ -417,7 +417,7 @@ def test_run_ingest_caches_senders_before_mention_insertion(MockMM, MockVS, tmp_
 
 
 @patch("pipeline.ingest.VectorStore")
-@patch("pipeline.ingest.MattermostConnector")
+@patch("connectors.factory.MattermostConnector")
 def test_run_ingest_message_with_no_mentions_writes_no_rows(MockMM, MockVS, tmp_path):
     config_path, _ = _write_config(
         tmp_path,
@@ -439,7 +439,7 @@ def test_run_ingest_message_with_no_mentions_writes_no_rows(MockMM, MockVS, tmp_
 # ── internal_domains rule (TASK-025) ─────────────────────────────────────────
 
 @patch("pipeline.ingest.VectorStore")
-@patch("pipeline.ingest.MattermostConnector")
+@patch("connectors.factory.MattermostConnector")
 def test_run_ingest_classifies_internal_from_cached_sender_email(MockMM, MockVS, tmp_path):
     """A sender on an internal domain is classified internal even without alias / source flag."""
     config_path, _ = _write_config(
@@ -467,7 +467,7 @@ def test_run_ingest_classifies_internal_from_cached_sender_email(MockMM, MockVS,
 
 
 @patch("pipeline.ingest.VectorStore")
-@patch("pipeline.ingest.MattermostConnector")
+@patch("connectors.factory.MattermostConnector")
 def test_run_ingest_external_domain_stays_external(MockMM, MockVS, tmp_path):
     config_path, _ = _write_config(
         tmp_path,
@@ -493,7 +493,7 @@ def test_run_ingest_external_domain_stays_external(MockMM, MockVS, tmp_path):
 
 
 @patch("pipeline.ingest.VectorStore")
-@patch("pipeline.ingest.EmailConnector")
+@patch("connectors.factory.EmailConnector")
 def test_run_ingest_email_internal_only_when_all_recipients_internal(MockE, MockVS, tmp_path):
     """Recipient-aware: sender + every recipient must be on the internal domain."""
     config_path, _ = _write_config(
@@ -529,7 +529,7 @@ def test_run_ingest_email_internal_only_when_all_recipients_internal(MockE, Mock
 
 
 @patch("pipeline.ingest.VectorStore")
-@patch("pipeline.ingest.MattermostConnector")
+@patch("connectors.factory.MattermostConnector")
 def test_run_ingest_alias_false_demotes_internal_domain_sender(MockMM, MockVS, tmp_path):
     """Contractor pattern: alias says `internal: false` even though domain matches."""
     config_path, _ = _write_config(
@@ -560,8 +560,8 @@ def test_run_ingest_alias_false_demotes_internal_domain_sender(MockMM, MockVS, t
 # ── parallel fetch (TASK-027) ────────────────────────────────────────────────
 
 @patch("pipeline.ingest.VectorStore")
-@patch("pipeline.ingest.PachcaConnector")
-@patch("pipeline.ingest.MattermostConnector")
+@patch("connectors.factory.PachcaConnector")
+@patch("connectors.factory.MattermostConnector")
 def test_run_ingest_aggregates_messages_from_multiple_sources_in_parallel(
     MockMM, MockPA, MockVS, tmp_path,
 ):
@@ -595,8 +595,8 @@ def test_run_ingest_aggregates_messages_from_multiple_sources_in_parallel(
 
 
 @patch("pipeline.ingest.VectorStore")
-@patch("pipeline.ingest.PachcaConnector")
-@patch("pipeline.ingest.MattermostConnector")
+@patch("connectors.factory.PachcaConnector")
+@patch("connectors.factory.MattermostConnector")
 def test_run_ingest_one_source_raising_lets_other_land_and_records_partial(
     MockMM, MockPA, MockVS, tmp_path,
 ):
@@ -626,7 +626,7 @@ def test_run_ingest_one_source_raising_lets_other_land_and_records_partial(
 
 
 @patch("pipeline.ingest.VectorStore")
-@patch("pipeline.ingest.MattermostConnector")
+@patch("connectors.factory.MattermostConnector")
 def test_run_ingest_fetch_workers_one_takes_sequential_path(
     MockMM, MockVS, tmp_path,
 ):

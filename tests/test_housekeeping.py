@@ -220,7 +220,7 @@ def test_ingest_end_hook_catches_housekeeping_exception(tmp_path):
 
     from unittest.mock import MagicMock as MM
     with patch("pipeline.ingest.VectorStore"), \
-        patch("pipeline.ingest.MattermostConnector") as MockMM, \
+        patch("connectors.factory.MattermostConnector") as MockMM, \
         patch("pipeline.housekeeping.run_housekeeping",
               side_effect=RuntimeError("housekeeping kaboom")):
         connector = MM()
@@ -247,7 +247,7 @@ def test_ingest_end_hook_runs_housekeeping_when_status_ok(tmp_path):
 
     from unittest.mock import MagicMock as MM
     with patch("pipeline.ingest.VectorStore"), \
-        patch("pipeline.ingest.MattermostConnector") as MockMM, \
+        patch("connectors.factory.MattermostConnector") as MockMM, \
         patch("pipeline.housekeeping.run_housekeeping",
               return_value={"status": "ok", "messages_deleted": 0,
                             "mentions_deleted": 0, "vectors_deleted": 0,
@@ -279,7 +279,7 @@ def test_ingest_end_hook_skips_housekeeping_when_retention_block_absent(tmp_path
 
     from unittest.mock import MagicMock as MM
     with patch("pipeline.ingest.VectorStore"), \
-            patch("pipeline.ingest.MattermostConnector") as MockMM:
+            patch("connectors.factory.MattermostConnector") as MockMM:
         connector = MM()
         connector.fetch_messages.return_value = {
             "messages": [], "messages_count": 0,

@@ -15,10 +15,7 @@ from config import (
     get_ingest_settings,
 )
 from .alias_resolver import AliasResolver
-from connectors.email_connector import EmailConnector
-from connectors.mattermost_connector import MattermostConnector
-from connectors.pachca_connector import PachcaConnector
-from connectors.telegram_connector import TelegramConnector
+from connectors.factory import build_connector
 from storage.db import Database
 from storage.vector_store import VectorStore
 from .filter_engine import FilterEngine
@@ -186,100 +183,39 @@ def run_ingest(
             source_type = source_cfg.get("type")
             source_filters = source_cfg.get("filters", {})
 
-            if source_type == "mattermost":
-                try:
-                    connector = MattermostConnector(
-                        base_url=source_cfg["url"],
-                        token=source_cfg["token"],
-                        source_name=source_name,
-                        skip_channels=source_filters.get("skip_channels"),
-                        only_channels=source_filters.get("only_channels"),
-                        db_callback=db.get_channel if not force else None,
-                        db=db,
-                        attachments_path=attachments_path,
-                        text_extensions=text_extensions,
-                        youtrack_cfg=youtrack_cfg,
-                    )
-                    connector.connect()
-                    filter_engine = FilterEngine(source_filters)
-                    connectors.append((source_name, connector, filter_engine))
-                    logger.info(f"[{source_name}] Mattermost connector initialized")
-                    if source_filters.get("only_channels"):
-                        logger.info(f"[{source_name}] only_channels: {source_filters['only_channels']}")
-                except Exception as e:
-                    logger.error(f"[{source_name}] Failed to initialize: {e}")
-                    source_errors.append({"source": source_name, "error": str(e)[:300]})
+            try:
+                connector = build_connector(
+                    source_type=source_type,
+                    source_name=source_name,
+                    src_cfg=source_cfg,
+                    db=db,
+                    db_callback=db.get_channel if not force else None,
+                    text_extensions=text_extensions,
+                    attachments_path=attachments_path,
+                    youtrack_cfg=youtrack_cfg,
+                    source_filters=source_filters,
+                )
+            except Exception as e:
+                logger.error(f"[{source_name}] Failed to initialize: {e}")
+                source_errors.append({"source": source_name, "error": str(e)[:300]})
+                continue
 
-            elif source_type == "telegram":
-                try:
-                    connector = TelegramConnector(
-                        bot_token=source_cfg["token"],
-                        source_name=source_name,
-                        chat_ids=source_filters.get("only_channels"),
-                        db_callback=db.get_channel if not force else None,
-                        db=db,
-                        attachments_path=attachments_path,
-                        text_extensions=text_extensions,
-                        youtrack_cfg=youtrack_cfg,
-                    )
-                    connector.connect()
-                    filter_engine = FilterEngine(source_filters)
-                    connectors.append((source_name, connector, filter_engine))
-                    logger.info(f"[{source_name}] Telegram connector initialized")
-                except Exception as e:
-                    logger.error(f"[{source_name}] Failed to initialize: {e}")
-                    source_errors.append({"source": source_name, "error": str(e)[:300]})
-
-            elif source_type == "pachca":
-                try:
-                    connector = PachcaConnector(
-                        access_token=source_cfg["token"],
-                        source_name=source_name,
-                        skip_channels=source_filters.get("skip_channels"),
-                        only_channels=source_filters.get("only_channels"),
-                        db_callback=db.get_channel if not force else None,
-                        db=db,
-                        text_extensions=text_extensions,
-                        attachments_path=attachments_path,
-                        youtrack_cfg=youtrack_cfg,
-                    )
-                    connector.connect()
-                    filter_engine = FilterEngine(source_filters)
-                    connectors.append((source_name, connector, filter_engine))
-                    logger.info(f"[{source_name}] Pachca connector initialized")
-                except Exception as e:
-                    logger.error(f"[{source_name}] Failed to initialize: {e}")
-                    source_errors.append({"source": source_name, "error": str(e)[:300]})
-
-            elif source_type == "email":
-                try:
-                    connector = EmailConnector(
-                        host=source_cfg["host"],
-                        port=source_cfg.get("port", 993),
-                        username=source_cfg["username"],
-                        password=source_cfg["password"],
-                        source_name=source_name,
-                        folders=source_cfg.get("folders"),
-                        skip_folders=source_filters.get("skip_folders"),
-                        channel_names=source_cfg.get("channel_names"),
-                        drafts_folder=source_cfg.get("drafts_folder", "Drafts"),
-                        from_address=source_cfg.get("from_address"),
-                        db_callback=db.get_channel if not force else None,
-                        db=db,
-                        text_extensions=text_extensions,
-                        attachments_path=attachments_path,
-                        youtrack_cfg=youtrack_cfg,
-                    )
-                    connector.connect()
-                    filter_engine = FilterEngine(source_filters)
-                    connectors.append((source_name, connector, filter_engine))
-                    logger.info(f"[{source_name}] Email (IMAP) connector initialized")
-                except Exception as e:
-                    logger.error(f"[{source_name}] Failed to initialize: {e}")
-                    source_errors.append({"source": source_name, "error": str(e)[:300]})
-
-            else:
+            if connector is None:
                 logger.warning(f"[{source_name}] Unknown source type '{source_type}', skipping")
+                continue
+
+            try:
+                connector.connect()
+            except Exception as e:
+                logger.error(f"[{source_name}] Failed to connect: {e}")
+                source_errors.append({"source": source_name, "error": str(e)[:300]})
+                continue
+
+            filter_engine = FilterEngine(source_filters)
+            connectors.append((source_name, connector, filter_engine))
+            logger.info(f"[{source_name}] {source_type} connector initialized")
+            if source_type == "mattermost" and source_filters.get("only_channels"):
+                logger.info(f"[{source_name}] only_channels: {source_filters['only_channels']}")
 
         stats["sources_checked"] = len(connectors)
 
