@@ -8,6 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from connectors.factory import build_connector
+from mcp_server.projectors import TOOL_ARG_PROJECTORS, args_summary_for
 from mcp_server.schemas import tool_schemas
 from pipeline.alias_resolver import AliasResolver
 from pipeline.format import (
@@ -143,54 +144,9 @@ async def _dispatch_tool(name: str, arguments: dict) -> list[TextContent]:
     return await handler(arguments)
 
 
-# ── Per-tool args_summary redaction (TASK-026) ───────────────────────────────
-# Stored verbatim in tool_calls.args_summary so the dashboard can show
-# "agent searched for 'deploy' 18 times today" without leaking message bodies.
-# Tools that handle sensitive payloads explicitly project them down.
-
-def _truncate(s, limit: int = 120) -> str:
-    if not isinstance(s, str):
-        s = "" if s is None else str(s)
-    return s if len(s) <= limit else s[:limit] + "…"
-
-
-_TOOL_ARG_PROJECTORS = {
-    # NEVER store the message body — only its shape.
-    "send_message": lambda a: {
-        "source": a.get("source"),
-        "channel": a.get("channel"),
-        "text_len": len(a.get("text") or ""),
-        "has_reply_to": bool(a.get("reply_to")),
-    },
-    # Query is fine to keep (operator search terms aren't secret), but cap it.
-    "search_messages": lambda a: {
-        "query": _truncate(a.get("query") or "", 120),
-        "mode": a.get("mode"),
-        "source": a.get("source"),
-        "channel": a.get("channel"),
-        "limit": a.get("limit"),
-        "mentions_me": bool(a.get("mentions_me")),
-    },
-    # Write tools — store only the canonical target, not the field payload.
-    "upsert_user_alias": lambda a: {"canonical_name": a.get("canonical_name")},
-    "remove_user_alias": lambda a: {"canonical_name": a.get("canonical_name")},
-    "update_user_alias_strings": lambda a: {"canonical_name": a.get("canonical_name")},
-    # Threads / digests: target id / limits, no content.
-    "get_thread": lambda a: {"thread_id": a.get("thread_id"), "limit": a.get("limit")},
-    "summarize_channel": lambda a: {"channel": a.get("channel"), "hours": a.get("hours")},
-    "summarize_messages": lambda a: {"hours": a.get("hours"), "since": a.get("since")},
-}
-
-
-def _args_summary_for(tool_name: str, args: dict) -> str:
-    """Project + JSON-encode args for the tool_calls row. Falls back to verbatim."""
-    args = args or {}
-    projector = _TOOL_ARG_PROJECTORS.get(tool_name)
-    payload = projector(args) if projector else dict(args)
-    try:
-        return json.dumps(payload, ensure_ascii=False, default=str)
-    except Exception:
-        return json.dumps({"_unserializable": True})
+# Re-export the projector + summarizer for back-compat with existing tests.
+_args_summary_for = args_summary_for
+_TOOL_ARG_PROJECTORS = TOOL_ARG_PROJECTORS
 
 
 async def _search_messages(args: dict) -> list[TextContent]:
