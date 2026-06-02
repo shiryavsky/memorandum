@@ -148,10 +148,9 @@ def main():
     args = parser.parse_args()
 
     if args.systemd:
-        os.environ["SYSTEMD_MODE"] = "1"
-        run_scheduler(args.config)
-    else:
-        run_scheduler(config_path=args.config)
+        _print_systemd_instructions()
+        sys.exit(0)
+    run_scheduler(config_path=args.config)
 
 
 if __name__ == "__main__":
