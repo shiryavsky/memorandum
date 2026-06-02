@@ -1,4 +1,29 @@
-"""MCP server exposing message collection tools to Claude."""
+"""MCP server entry point — wires tool schemas, dispatch, and shared state.
+
+Tool **implementations** live under :mod:`mcp_server.tools` (one module per
+domain — search / digests / channels / threads / identity / files / info).
+Tool **schemas** (what Claude sees in tool introspection) live in
+:mod:`mcp_server.schemas`. Tool **call args projection** for the audit log
+lives in :mod:`mcp_server.projectors`.
+
+This module owns:
+- The :class:`mcp.server.Server` instance and its two decorated entry
+  points (``list_tools`` and ``call_tool``).
+- Shared singletons (``_db``, ``_vs``, ``_config``, ``_resolver``) and
+  the accessors that build them lazily. Tools import this module as
+  ``from mcp_server import server as _srv`` and call ``_srv.get_db()``
+  at runtime so ``unittest.mock.patch("mcp_server.server.get_db")``
+  keeps working through the indirection.
+- ``_build_live_connector`` — kept here (not in ``tools/channels.py``)
+  because existing tests patch it at this path.
+- ``_invalidate_config_cache`` — touches this module's globals; can't
+  live elsewhere.
+- The ``main`` coroutine that runs the stdio loop.
+
+Tests historically imported many tool handlers from ``mcp_server.server``.
+We re-export the same names below so those imports keep working without
+churn.
+"""
 import sys
 from pathlib import Path
 
@@ -7,33 +32,33 @@ from pathlib import Path
 # BEFORE any `from connectors. / pipeline. / storage. / config` imports.
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import asyncio
+from typing import Optional
+
+from mcp.types import TextContent, Tool
+from mcp.server import Server
+from mcp.server.stdio import stdio_server
+
+from config import (
+    get_aliases,
+    get_internal_domains,
+    load_config,
+)
 from connectors.factory import build_connector
 from mcp_server.projectors import TOOL_ARG_PROJECTORS, args_summary_for
 from mcp_server.schemas import tool_schemas
 from pipeline.alias_resolver import AliasResolver
-from pipeline.format import (
+# Re-imported here so test imports like
+# `from mcp_server.server import format_message` keep working.
+from pipeline.format import (  # noqa: F401 — public re-export
     ext_marker as _ext_marker,
     format_message,
     format_timestamp,
     get_display_tz,
     make_message_url,
 )
-from storage.vector_store import VectorStore
 from storage.db import Database
-from config import (
-    load_config,
-    get_aliases,
-    get_internal_domains,
-    get_alias_edit_settings,
-)
-from mcp.types import Tool, TextContent
-from mcp.server.stdio import stdio_server
-from mcp.server import Server
-import asyncio
-import json
-from datetime import datetime, timedelta, timezone
-from typing import Optional
-from zoneinfo import ZoneInfo
+from storage.vector_store import VectorStore
 
 
 # Initialize server
@@ -96,6 +121,86 @@ def get_resolver() -> AliasResolver:
     return _resolver
 
 
+def _invalidate_config_cache() -> None:
+    """Drop the cached config so the next tool call re-reads from disk.
+
+    Also resets the cached Database and VectorStore handles — they were
+    constructed from ``_config["sqlite_path"]`` / ``_config["chroma_path"]``,
+    and if those paths changed in the new config the live handles would
+    still point at the old files.
+    """
+    global _config, _db, _vs, _resolver, _resolver_config_id
+    if _db is not None:
+        try:
+            _db.close()
+        except Exception:
+            pass
+    _config = None
+    _db = None
+    _vs = None
+    _resolver = None
+    _resolver_config_id = None
+
+
+def _build_live_connector(source: str, src_cfg: dict, text_extensions: set):
+    """Build a read-only connector (db=None) for a live fetch, or None if unsupported.
+
+    Email is the one exception: drafts need a writable handle to look up
+    parent messages for In-Reply-To headers, so it gets the real DB.
+
+    Kept on this module (not in ``tools/channels.py``) because existing
+    tests patch it at ``mcp_server.server._build_live_connector``.
+    """
+    source_type = src_cfg.get("type")
+    db_for_connector = get_db() if source_type == "email" else None
+    return build_connector(
+        source_type=source_type,
+        source_name=source,
+        src_cfg=src_cfg,
+        db=db_for_connector,
+        db_callback=get_db().get_channel,
+        text_extensions=text_extensions,
+        youtrack_cfg=get_config().get("youtrack") or {},
+    )
+
+
+# Re-export the projector + summarizer for back-compat with existing tests.
+_args_summary_for = args_summary_for
+_TOOL_ARG_PROJECTORS = TOOL_ARG_PROJECTORS
+
+
+# Tool handler imports — done AFTER the accessors above are defined so the
+# circular `mcp_server.tools.<x> -> mcp_server.server` import sees a
+# partially-loaded but functional server module.
+from mcp_server.tools import (  # noqa: E402
+    TOOL_HANDLERS,
+    _build_aliases_text,        # noqa: F401 — test re-exports below
+    _build_channel_desc_lookup,  # noqa: F401
+    _find_by_issue,             # noqa: F401
+    _find_cached_file,          # noqa: F401
+    _get_attached_file,         # noqa: F401
+    _get_health,                # noqa: F401
+    _get_new_messages,          # noqa: F401
+    _get_stats,                 # noqa: F401
+    _get_thread,                # noqa: F401
+    _get_user_aliases,          # noqa: F401
+    _list_channels,             # noqa: F401
+    _remove_user_alias,         # noqa: F401
+    _search_messages,           # noqa: F401
+    _send_message,              # noqa: F401
+    _serve_file_content,        # noqa: F401
+    _short_description,         # noqa: F401
+    _summarize_channel,         # noqa: F401
+    _summarize_messages,        # noqa: F401
+    _try_mattermost_download,   # noqa: F401
+    _try_telegram_download,     # noqa: F401
+    _update_user_alias_strings,  # noqa: F401
+    _upsert_user_alias,         # noqa: F401
+    _who_mentioned,             # noqa: F401
+)
+_TOOL_HANDLERS = TOOL_HANDLERS
+
+
 @app.list_tools()
 async def list_tools() -> list[Tool]:
     """List available MCP tools."""
@@ -126,7 +231,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         try:
             get_db().log_tool_call(
                 tool_name=name,
-                args_summary=_args_summary_for(name, arguments),
+                args_summary=args_summary_for(name, arguments),
                 duration_ms=duration_ms,
                 success=success,
                 error=error_text,
@@ -144,959 +249,15 @@ async def _dispatch_tool(name: str, arguments: dict) -> list[TextContent]:
     return await handler(arguments)
 
 
-# Re-export the projector + summarizer for back-compat with existing tests.
-_args_summary_for = args_summary_for
-_TOOL_ARG_PROJECTORS = TOOL_ARG_PROJECTORS
-
-
-async def _search_messages(args: dict) -> list[TextContent]:
-    """Search messages by keyword or semantic similarity."""
-    mode = args.get("mode", "semantic")
-    limit = args.get("limit", 20)
-    filter_mentions_me = args.get("mentions_me", False)
-    source = args.get("source")
-    channel = args.get("channel")
-
-    # Resolve channel id/name/display_name to the canonical channel_id so the
-    # Chroma metadata filter (which stores channel_id) and SQLite path agree.
-    # Pinning source from the resolved row also disambiguates cross-source name
-    # collisions for the rest of the call.
-    if channel:
-        ch_row = get_db().resolve_channel(channel, source)
-        if ch_row:
-            channel = ch_row["id"]
-            source = source or ch_row["source"]
-
-    if mode == "semantic":
-        # Semantic search using vector embeddings
-        hits = get_vs().semantic_search(
-            query=args["query"],
-            n_results=limit,
-            source=source,
-            channel=channel,
-            since=args.get("since")
-        )
-
-        if not hits:
-            return [TextContent(type="text", text="No semantic matches found.")]
-
-        config = get_config()
-        tz = get_display_tz(config)
-        db_rows = {r["id"]: r for r in get_db().get_by_ids([h["id"] for h in hits])}
-        results = []
-        for h in hits:
-            row = db_rows.get(h["id"])
-            if filter_mentions_me and (not row or not row.get("mentions_me")):
-                continue
-            if row:
-                results.append(format_message(row, config=config))
-            else:
-                results.append(
-                    f"[{format_timestamp(h['metadata'].get('timestamp', ''), tz)}] "
-                    f"[{h['metadata'].get('source', '')}/{h['metadata'].get('channel', '')}] "
-                    f"{h['metadata'].get('sender', '')}: {h['text'][:200]}"
-                )
-    else:
-        # Keyword search using SQLite LIKE
-        rows = get_db().search(
-            query=args["query"],
-            source=source,
-            channel=channel,
-            since=args.get("since"),
-            mentions_me=filter_mentions_me,
-            limit=limit
-        )
-
-        if not rows:
-            return [TextContent(type="text", text="No keyword matches found.")]
-
-        results = [format_message(r, config=get_config()) for r in rows]
-
-    return [TextContent(type="text", text="\n".join(results))]
-
-
-async def _summarize_channel(args: dict) -> list[TextContent]:
-    """Get messages from a channel for summarization."""
-    since_str = args.get("since")
-    if since_str:
-        since = since_str
-    else:
-        since = (datetime.now(timezone.utc) - timedelta(days=7)).date().isoformat()
-
-    rows = get_db().search(
-        channel=args["channel"],
-        since=since,
-        limit=args.get("max_msgs", 100)
-    )
-
-    if not rows:
-        return [TextContent(
-            type="text",
-            text=f"No messages found in channel '{args['channel']}' for the specified period."
-        )]
-
-    # Format messages as a blob for summarization
-    config = get_config()
-    tz = get_display_tz(config)
-    parts = [f"## Messages from {args['channel']} (since {since})\n"]
-    # Prepend the channel description as context (first match across sources is fine; name
-    # collisions are rare and the description still belongs to one of them).
-    desc_lookup = _build_channel_desc_lookup(get_db())
-    desc = next((d for (_, name), d in desc_lookup.items() if name == args["channel"]), None)
-    desc = _short_description(desc)
-    if desc:
-        parts.append(f"_Channel description: {desc}_\n")
-    for r in rows:
-        line = f"[{format_timestamp(r['timestamp'], tz)}] {r['sender']}{_ext_marker(r)}: {r['text']}"
-        url = make_message_url(r, config)
-        if url:
-            line += f" 🔗 {url}"
-        parts.append(line)
-
-    return [TextContent(type="text", text="\n".join(parts))]
-
-
-async def _summarize_messages(args: dict) -> list[TextContent]:
-    """Generate a digest of messages from a flexible time range.
-
-    Args:
-        hours: Number of hours to look back (overrides days)
-        days: Number of days to look back (default: 1)
-        source: Optional filter by source
-        channel: Optional filter by channel name
-        max_messages: Maximum messages per channel (default: 100)
-    """
-    hours = args.get("hours")
-    if hours:
-        delta = timedelta(hours=hours)
-        time_desc = f"{hours} hours"
-    else:
-        days = args.get("days", 1)
-        delta = timedelta(days=days)
-        time_desc = f"{days} day{'s' if days != 1 else ''}"
-
-    since = (datetime.now(timezone.utc) - delta).isoformat()
-
-    rows = get_db().search(
-        source=args.get("source"),
-        channel=args.get("channel"),
-        since=since,
-        limit=1000
-    )
-
-    if not rows:
-        return [TextContent(
-            type="text",
-            text=f"No messages in the last {time_desc}."
-        )]
-
-    # Group by (source, channel)
-    by_channel: dict[tuple, list] = {}
-    for r in rows:
-        key = (r['source'], r['channel'])
-        by_channel.setdefault(key, []).append(r)
-
-    config = get_config()
-    max_per_channel = args.get("max_messages", 100)
-    desc_lookup = _build_channel_desc_lookup(get_db())
-    parts = [f"# Message Digest: Last {time_desc}\n"]
-    parts.append(f"_Total: {len(rows)} messages across {len(by_channel)} channels_\n")
-
-    for (src, ch), msgs in sorted(by_channel.items(), key=lambda x: len(x[1]), reverse=True):
-        parts.append(f"\n## [{src}] {ch} ({len(msgs)} messages)\n")
-        desc = _short_description(desc_lookup.get((src, ch)))
-        if desc:
-            parts.append(f"_{desc}_\n")
-        for m in msgs[:max_per_channel]:
-            url = make_message_url(m, config)
-            link = f" 🔗 {url}" if url else ""
-            parts.append(f"- **{m['sender']}**{_ext_marker(m)}: {m['text'][:150]}{link}")
-        if len(msgs) > max_per_channel:
-            parts.append(f"- ... and {len(msgs) - max_per_channel} more")
-
-    return [TextContent(type="text", text="\n".join(parts))]
-
-
-MAX_DESCRIPTION_LEN = 300
-
-
-def _short_description(desc: Optional[str]) -> Optional[str]:
-    """Collapse whitespace and truncate a channel description for inline display."""
-    if not desc:
-        return None
-    flat = " ".join(desc.split())
-    return flat if len(flat) <= MAX_DESCRIPTION_LEN else flat[:MAX_DESCRIPTION_LEN - 1] + "…"
-
-
-def _build_channel_desc_lookup(db) -> dict[tuple, str]:
-    """Return a (source, display_name)→description map for adding context in digests."""
-    out: dict[tuple, str] = {}
-    for r in db.list_channels():
-        desc = r.get("description")
-        if not desc:
-            continue
-        name = r.get("display_name") or r.get("name") or r.get("id")
-        out[(r["source"], name)] = desc
-    return out
-
-
-async def _list_channels(args: dict) -> list[TextContent]:
-    """List known channels (id + name + description) from the DB for discovery."""
-    rows = get_db().list_channels(source=args.get("source"))
-    if not rows:
-        return [TextContent(type="text", text="No channels found. Run an ingest first.")]
-
-    lines = ["# Channels\n"]
-    for r in rows:
-        name = r.get("display_name") or r.get("name") or r.get("id")
-        line = f"- [{r['source']}] {name} — id: `{r['id']}`"
-        desc = _short_description(r.get("description"))
-        if desc:
-            line += f" — _{desc}_"
-        lines.append(line)
-    return [TextContent(type="text", text="\n".join(lines))]
-
-
-def _build_live_connector(source: str, src_cfg: dict, text_extensions: set):
-    """Build a read-only connector (db=None) for a live fetch, or None if unsupported.
-
-    Email is the one exception: drafts need a writable handle to look up
-    parent messages for In-Reply-To headers, so it gets the real DB.
-    """
-    source_type = src_cfg.get("type")
-    db_for_connector = get_db() if source_type == "email" else None
-    return build_connector(
-        source_type=source_type,
-        source_name=source,
-        src_cfg=src_cfg,
-        db=db_for_connector,
-        db_callback=get_db().get_channel,
-        text_extensions=text_extensions,
-        youtrack_cfg=get_config().get("youtrack") or {},
-    )
-
-
-async def _get_new_messages(args: dict) -> list[TextContent]:
-    """Fetch messages newer than what's in the DB for a channel, live from the source."""
-    source = args.get("source", "").strip()
-    channel = args.get("channel", "").strip()
-    limit = args.get("limit", 50)
-    if not source or not channel:
-        return [TextContent(type="text", text="Both 'source' and 'channel' are required.")]
-
-    config = get_config()
-    src_cfg = config.get("sources", {}).get(source)
-    if not src_cfg:
-        return [TextContent(type="text",
-                            text=f"Unknown source '{source}'. Use get_stats to list sources.")]
-
-    if src_cfg.get("type") == "email":
-        return [TextContent(type="text",
-                            text=f"Live fetch is not supported for IMAP sources ('{source}'); "
-                                 f"the next scheduled ingest will pick up new email.")]
-
-    text_extensions = set(config.get("text_extensions", [".txt", ".md", ".log", ".json", ".lst"]))
-    connector = _build_live_connector(source, src_cfg, text_extensions)
-    if connector is None:
-        return [TextContent(type="text",
-                            text=f"Source type '{src_cfg.get('type')}' is not supported.")]
-
-    try:
-        connector.connect()
-        messages = connector.fetch_new(channel, limit=limit)
-    except NotImplementedError as e:
-        return [TextContent(type="text", text=str(e))]
-    except ValueError as e:
-        return [TextContent(type="text", text=str(e))]
-    except Exception as e:
-        return [TextContent(type="text", text=f"Failed to read channel '{channel}': {e}")]
-    finally:
-        try:
-            connector.disconnect()
-        except Exception:
-            pass
-
-    db = get_db()
-    messages = [m for m in messages if not db.exists(m["id"])]
-    if not messages:
-        return [TextContent(type="text",
-                            text=f"No new messages in '{channel}' ({source}) since last ingest.")]
-
-    # Classify internal/external live (these aren't ingested yet, so they carry no flag).
-    resolver = get_resolver()
-    source_is_internal = bool(src_cfg.get("internal", False))
-    for m in messages:
-        sender_id = m.get("sender_id") or ""
-        email = m.get("sender_email")
-        if not email and sender_id:
-            row = db.get_sender(source, sender_id)
-            email = (row or {}).get("email")
-        m["internal"] = 1 if resolver.is_internal(
-            m.get("sender", ""), email=email, source_internal=source_is_internal,
-        ) else 0
-
-    chan_label = messages[0].get("channel") or channel
-    header = f"# {len(messages)} new message(s) in [{source}] {chan_label}\n"
-    lines = [format_message(m, config=config) for m in messages]
-    return [TextContent(type="text", text=header + "\n".join(lines))]
-
-
-def _sent_message_url(source: str, stype: str, channel: str, message_id,
-                      connector, config: dict) -> Optional[str]:
-    """Best-effort permalink for a just-sent message, reusing make_message_url."""
-    if message_id in (None, ""):
-        return None
-    raw: dict = {}
-    msg: dict = {"source": source, "raw": raw}
-    if stype == "mattermost":
-        resolved = connector._resolve_channel(channel)
-        if resolved:
-            raw["team_name"] = resolved.get("team_name", "")
-            raw["post_id"] = str(message_id)
-            msg["channel_name"] = resolved.get("name", "")
-    elif stype == "telegram":
-        s = str(channel)
-        raw["chat_type"] = "supergroup" if s.startswith("-100") else "private"
-        raw["chat_id"] = s[4:] if s.startswith("-100") else s.lstrip("-")
-        raw["message_id"] = str(message_id)
-    elif stype == "pachca":
-        raw["chat_id"] = str(channel)
-        raw["message_id"] = str(message_id)
-    return make_message_url(msg, config)
-
-
-def _record_sent(source: str, channel: str, reply_to, text: str,
-                 success: bool, message_id=None, error: str = None) -> None:
-    """Log a send attempt (success or failure) to the sent_messages audit table."""
-    try:
-        get_db().record_sent_message({
-            "source": source, "channel": channel, "reply_to": reply_to,
-            "text": text, "success": success, "message_id": message_id, "error": error,
-        })
-    except Exception as e:
-        print(f"Failed to log sent message: {e}", file=sys.stderr)
-
-
-async def _send_message(args: dict) -> list[TextContent]:
-    """Send a text message to a channel, gated by the source's allow_send flag."""
-    source = args.get("source", "").strip()
-    channel = args.get("channel", "").strip()
-    text = args.get("text", "")
-    reply_to = args.get("reply_to") or None
-    if not source or not channel or not text:
-        return [TextContent(type="text", text="'source', 'channel', and 'text' are required.")]
-
-    config = get_config()
-    src_cfg = config.get("sources", {}).get(source)
-    if not src_cfg:
-        return [TextContent(type="text",
-                            text=f"Unknown source '{source}'. Use get_stats to list sources.")]
-
-    if src_cfg.get("allow_send") is not True:
-        return [TextContent(type="text",
-                            text=f"Sending is disabled for source '{source}'. "
-                                 f"Set allow_send: true in its config to enable.")]
-
-    stype = src_cfg.get("type")
-    connector = _build_live_connector(source, src_cfg, set())
-    if connector is None:
-        return [TextContent(type="text", text=f"Source type '{stype}' is not supported.")]
-
-    try:
-        connector.connect()
-        if stype == "mattermost":
-            message_id = connector.send_message(channel, text, root_id=reply_to)
-        elif stype == "telegram":
-            row = get_db().get_channel_row(source, channel)
-            extra = row.get("extra") if row else None
-            bcid = extra.get("business_connection_id") if isinstance(extra, dict) else None
-            message_id = connector.send_message(channel, text,
-                                                reply_to=int(reply_to) if reply_to else None,
-                                                business_connection_id=bcid)
-        elif stype == "pachca":
-            message_id = connector.send_message(channel, text,
-                                                parent_message_id=int(reply_to) if reply_to else None)
-        elif stype == "email":
-            # Email = draft in Drafts folder, NOT a live send. `channel` is unused
-            # by the connector for drafts; reply_to is the parent Message-ID.
-            message_id = connector.send_message(channel, text, reply_to=reply_to)
-        else:
-            return [TextContent(type="text", text=f"Source type '{stype}' is not supported.")]
-        url = _sent_message_url(source, stype, channel, message_id, connector, config)
-    except Exception as e:
-        _record_sent(source, channel, reply_to, text, success=False, error=str(e))
-        return [TextContent(type="text", text=f"Failed to send message to '{channel}' ({source}): {e}")]
-    finally:
-        try:
-            connector.disconnect()
-        except Exception:
-            pass
-
-    _record_sent(source, channel, reply_to, text, success=True, message_id=message_id)
-    result = {"success": True, "message_id": message_id, "url": url}
-    if stype == "email":
-        result["draft"] = True
-        result["note"] = ("Drafted to your Drafts folder — open your mail client to "
-                          "review and send.")
-    return [TextContent(type="text", text=json.dumps(result))]
-
-
-async def _get_thread(args: dict) -> list[TextContent]:
-    """Reconstruct a conversation thread (root + replies) ordered by timestamp."""
-    thread_id = args.get("thread_id", "").strip()
-    if not thread_id:
-        return [TextContent(type="text", text="thread_id is required.")]
-
-    rows = get_db().get_thread(
-        thread_id,
-        channel=args.get("channel"),
-        limit=args.get("limit", 50),
-    )
-    if not rows:
-        return [TextContent(type="text", text=f"No thread found for thread_id '{thread_id}'.")]
-
-    config = get_config()
-    parts = [f"# Thread {thread_id} ({len(rows)} messages)\n"]
-    for r in rows:
-        line = format_message(r, config=config, show_thread=False)
-        if r.get("reply_to_id"):
-            line += f"  ↳ reply to {r['reply_to_id']}"
-        parts.append(line)
-
-    return [TextContent(type="text", text="\n".join(parts))]
-
-
-async def _find_by_issue(args: dict) -> list[TextContent]:
-    """Return messages referencing a YouTrack issue id via links or channel name."""
-    issue_id = (args.get("issue_id") or "").strip()
-    if not issue_id:
-        return [TextContent(type="text", text="'issue_id' is required (e.g. 'PL-15491').")]
-
-    rows = get_db().find_by_issue_id(issue_id, limit=args.get("limit", 50))
-    if not rows:
-        return [TextContent(type="text",
-                            text=f"No messages found referencing '{issue_id}'.")]
-
-    config = get_config()
-    lines = [f"# {len(rows)} message(s) referencing {issue_id}\n"]
-    lines.extend(format_message(r, config=config) for r in rows)
-    return [TextContent(type="text", text="\n".join(lines))]
-
-
-async def _who_mentioned(args: dict) -> list[TextContent]:
-    """Return messages where `target` was @-mentioned. Resolves target/by via aliases."""
-    target = (args.get("target") or "").strip()
-    if not target:
-        return [TextContent(type="text", text="'target' is required ('me' or a name/alias).")]
-
-    config = get_config()
-    _, my_aliases = get_aliases(config)
-    resolver = get_resolver()
-
-    if target.lower() == "me":
-        if not my_aliases:
-            return [TextContent(type="text",
-                                text="'me' was requested but no my_aliases are configured.")]
-        # The current user has no slot in user_aliases (`my_aliases` is its own
-        # concept), so mentions of self are typically stored with `mentioned_canonical`
-        # NULL and only the raw token / sender_id filled in. Match across all three
-        # identifying columns rather than just canonical.
-        target_canonical = my_aliases[0]
-        tokens = [f"@{a}" for a in my_aliases]
-        sender_ids = _resolve_my_sender_ids(config, my_aliases)
-        by = (args.get("by") or "").strip()
-        by_canonical = resolver.resolve(by) if by else None
-        rows = get_db().get_mentions_for_identity(
-            canonicals=[target_canonical],
-            tokens=tokens,
-            sender_ids=sender_ids,
-            sender_canonical=by_canonical,
-            source=args.get("source"),
-            since=args.get("since"),
-            until=args.get("until"),
-            limit=args.get("limit", 50),
-        )
-    else:
-        target_canonical = resolver.resolve(target)
-        by = (args.get("by") or "").strip()
-        by_canonical = resolver.resolve(by) if by else None
-        rows = get_db().get_mentions(
-            mentioned_canonical=target_canonical,
-            sender_canonical=by_canonical,
-            source=args.get("source"),
-            since=args.get("since"),
-            until=args.get("until"),
-            limit=args.get("limit", 50),
-        )
-
-    if not rows:
-        scope = f" by {by_canonical}" if by_canonical else ""
-        return [TextContent(type="text",
-                            text=f"No mentions of '{target_canonical}'{scope} found.")]
-
-    header_by = f" by {by_canonical}" if by_canonical else ""
-    lines = [f"# {len(rows)} mention(s) of {target_canonical}{header_by}\n"]
-    for r in rows:
-        token = r.get("mentioned_token") or ""
-        marker = f"  ↳ as {token}" if token else ""
-        lines.append(format_message(r, config=config) + marker)
-    return [TextContent(type="text", text="\n".join(lines))]
-
-
-def _resolve_my_sender_ids(config: dict, my_aliases: list[str]) -> list[str]:
-    """Look up the current user's sender_ids across all configured sources.
-
-    Each `my_aliases` entry may be a chat handle (`john.doe`) — we ask
-    each source's senders table whether that string is a username. Hits become
-    sender_ids the mention-id column can match against. Misses are silent (full
-    names, nicknames, etc. simply don't show up in `senders.username`)."""
-    db = get_db()
-    out: list[str] = []
-    seen: set = set()
-    for source_name in (config.get("sources") or {}):
-        for alias in my_aliases:
-            sid = db.find_sender_id_by_username(source_name, alias)
-            if sid and sid not in seen:
-                seen.add(sid)
-                out.append(sid)
-    return out
-
-
-# ── user_aliases write tools (TASK-029) ──────────────────────────────────────
-
-def _alias_edit_guard(config: dict) -> Optional[str]:
-    """Return an error message if alias edits are disabled, else None."""
-    if not get_alias_edit_settings(config).get("allow_alias_edits", True):
-        return ("Alias edits are disabled (top-level `allow_alias_edits: false` in config). "
-                "Flip to `true` to enable agent-driven edits.")
-    return None
-
-
-def _is_my_aliases_target(config: dict, canonical_name: str) -> bool:
-    """True if `canonical_name` collides (case-insensitive) with any my_aliases value."""
-    _, my_aliases = get_aliases(config)
-    needle = (canonical_name or "").strip().lower()
-    return any((a or "").strip().lower() == needle for a in my_aliases)
-
-
-def _invalidate_config_cache() -> None:
-    """Drop the cached config so the next tool call re-reads from disk.
-
-    Also resets the cached Database and VectorStore handles — they were
-    constructed from `_config["sqlite_path"]` / `_config["chroma_path"]`,
-    and if those paths changed in the new config the live handles would
-    still point at the old files.
-    """
-    global _config, _db, _vs, _resolver, _resolver_config_id
-    if _db is not None:
-        try:
-            _db.close()
-        except Exception:
-            pass
-    _config = None
-    _db = None
-    _vs = None
-    _resolver = None
-    _resolver_config_id = None
-
-
-async def _upsert_user_alias(args: dict) -> list[TextContent]:
-    """Create or merge a single user_aliases entry. The MCP write surface."""
-    config = get_config()
-    err = _alias_edit_guard(config)
-    if err:
-        return [TextContent(type="text", text=err)]
-
-    canonical = (args.get("canonical_name") or "").strip()
-    if not canonical:
-        return [TextContent(type="text", text="`canonical_name` is required and must be non-empty.")]
-    if _is_my_aliases_target(config, canonical):
-        return [TextContent(type="text",
-                            text=f"Refusing to edit a my_aliases canonical ({canonical!r}); "
-                                 f"identity is operator territory.")]
-
-    settings = get_alias_edit_settings(config)
-    # Caps — refuse before touching the file.
-    aliases = args.get("aliases") or []
-    if not isinstance(aliases, list):
-        return [TextContent(type="text", text="`aliases` must be a list of strings.")]
-    if len(aliases) > settings["max_aliases_per_entry"]:
-        return [TextContent(type="text",
-                            text=f"Too many aliases ({len(aliases)}); cap is "
-                                 f"max_aliases_per_entry={settings['max_aliases_per_entry']}.")]
-    responsible_for = args.get("responsible_for") or []
-    if responsible_for and len(responsible_for) > settings["max_list_fields"]:
-        return [TextContent(type="text",
-                            text=f"responsible_for too long ({len(responsible_for)}); cap is "
-                                 f"max_list_fields={settings['max_list_fields']}.")]
-
-    from cli.alias_writer import (
-        load_aliases_yaml, save_aliases_yaml, apply_upsert,
-        _user_aliases, find_alias_owner,
-    )
-    yaml_obj, doc = load_aliases_yaml(_config_path)
-    # Cap entries — only for fresh creations (merges don't grow the list).
-    needle = canonical.lower()
-    is_new = not any(
-        isinstance(e, dict) and (e.get("canonical_name") or "").strip().lower() == needle
-        for e in _user_aliases(doc)
-    )
-    if is_new and len(_user_aliases(doc)) >= settings["max_entries"]:
-        return [TextContent(type="text",
-                            text=f"user_aliases already at the cap of {settings['max_entries']} "
-                                 f"entries; remove an entry first or raise max_entries in config.")]
-
-    # Conflict check on alias strings BEFORE the write, so we can name the owner.
-    conflicting: list = []
-    for a in aliases:
-        owner = find_alias_owner(doc, a)
-        if owner and owner.strip().lower() != needle:
-            conflicting.append((a, owner))
-    if conflicting:
-        msg = "; ".join(f"{a!r} already owned by {o!r}" for a, o in conflicting)
-        return [TextContent(type="text",
-                            text=f"Refusing upsert: {msg}. Remove from the other entry first.")]
-
-    payload: dict = {"canonical_name": canonical, "aliases": list(aliases)}
-    for f in ("internal", "role", "team", "reports_to", "responsible_for"):
-        if f in args and args[f] is not None:
-            payload[f] = args[f]
-
-    try:
-        result = apply_upsert(doc, payload, conflict_policy="merge")
-    except ValueError as e:
-        return [TextContent(type="text", text=f"Refusing upsert: {e}")]
-    save_aliases_yaml(_config_path, yaml_obj, doc)
-    _invalidate_config_cache()
-    return [TextContent(type="text", text=json.dumps({"ok": True, "entry": result},
-                                                     default=str, ensure_ascii=False))]
-
-
-async def _remove_user_alias(args: dict) -> list[TextContent]:
-    """Delete one user_aliases entry by canonical_name."""
-    config = get_config()
-    err = _alias_edit_guard(config)
-    if err:
-        return [TextContent(type="text", text=err)]
-
-    canonical = (args.get("canonical_name") or "").strip()
-    if not canonical:
-        return [TextContent(type="text", text="`canonical_name` is required and must be non-empty.")]
-    if _is_my_aliases_target(config, canonical):
-        return [TextContent(type="text",
-                            text=f"Refusing to remove a my_aliases canonical ({canonical!r}); "
-                                 f"identity is operator territory.")]
-
-    from cli.alias_writer import load_aliases_yaml, save_aliases_yaml, apply_remove
-    yaml_obj, doc = load_aliases_yaml(_config_path)
-    removed = apply_remove(doc, canonical)
-    if removed is None:
-        return [TextContent(type="text",
-                            text=f"No entry found for canonical_name {canonical!r}.")]
-    save_aliases_yaml(_config_path, yaml_obj, doc)
-    _invalidate_config_cache()
-    return [TextContent(type="text", text=json.dumps({"ok": True, "removed": removed},
-                                                     default=str, ensure_ascii=False))]
-
-
-async def _update_user_alias_strings(args: dict) -> list[TextContent]:
-    """Add and/or remove alias strings on one entry."""
-    config = get_config()
-    err = _alias_edit_guard(config)
-    if err:
-        return [TextContent(type="text", text=err)]
-
-    canonical = (args.get("canonical_name") or "").strip()
-    if not canonical:
-        return [TextContent(type="text", text="`canonical_name` is required and must be non-empty.")]
-    if _is_my_aliases_target(config, canonical):
-        return [TextContent(type="text",
-                            text=f"Refusing to edit a my_aliases canonical ({canonical!r}); "
-                                 f"identity is operator territory.")]
-
-    add = args.get("add") or []
-    remove = args.get("remove") or []
-    if not isinstance(add, list) or not isinstance(remove, list):
-        return [TextContent(type="text", text="`add` and `remove` must be lists of strings.")]
-    if not add and not remove:
-        return [TextContent(type="text",
-                            text="At least one of `add` or `remove` must be non-empty.")]
-
-    settings = get_alias_edit_settings(config)
-    from cli.alias_writer import (
-        load_aliases_yaml, save_aliases_yaml, apply_alias_string_change,
-    )
-    yaml_obj, doc = load_aliases_yaml(_config_path)
-
-    # Cap check: project the resulting alias count and refuse if it would exceed.
-    from cli.alias_writer import _find_entry
-    _, entry = _find_entry(doc, canonical)
-    if entry is None:
-        return [TextContent(type="text",
-                            text=f"No entry found for canonical_name {canonical!r}.")]
-    current = list(entry.get("aliases") or [])
-    remove_lc = {r.strip().lower() for r in remove}
-    projected = [a for a in current if a.strip().lower() not in remove_lc] + list(add)
-    # dedup for accurate count
-    seen: set = set()
-    projected_unique: list = []
-    for a in projected:
-        k = a.strip().lower() if isinstance(a, str) else a
-        if k in seen:
-            continue
-        seen.add(k)
-        projected_unique.append(a)
-    if len(projected_unique) > settings["max_aliases_per_entry"]:
-        return [TextContent(type="text",
-                            text=f"Would push aliases to {len(projected_unique)} entries; cap is "
-                                 f"max_aliases_per_entry={settings['max_aliases_per_entry']}.")]
-
-    try:
-        result = apply_alias_string_change(doc, canonical, add=add, remove=remove)
-    except ValueError as e:
-        return [TextContent(type="text", text=f"Refusing update: {e}")]
-    save_aliases_yaml(_config_path, yaml_obj, doc)
-    _invalidate_config_cache()
-    return [TextContent(type="text", text=json.dumps({"ok": True, "entry": result},
-                                                     default=str, ensure_ascii=False))]
-
-
-async def _get_stats(args: dict) -> list[TextContent]:
-    """Get message statistics."""
-    db = get_db()
-    vs = get_vs()
-    config = get_config()
-
-    total = db.count()
-    vector_count = vs.count()
-
-    parts = [
-        "# Message Statistics",
-        f"- Total messages in SQLite: {total}",
-    ]
-    for src_name, src_cfg in config.get("sources", {}).items():
-        count = db.count(source=src_name)
-        src_type = src_cfg.get("type", "?")
-        enabled = "" if src_cfg.get("enabled", True) else " (disabled)"
-        parts.append(f"  - {src_name} [{src_type}]{enabled}: {count}")
-    parts.append(f"- Total messages in Vector Store: {vector_count}")
-
-    return [TextContent(type="text", text="\n".join(parts))]
-
-
-def _find_cached_file(cache_dir: Path, file_id: str) -> Optional[Path]:
-    """Return the first cached file whose stem matches file_id (any extension)."""
-    try:
-        for p in cache_dir.iterdir():
-            if p.stem == file_id:
-                return p
-    except OSError:
-        pass
-    return None
-
-
-def _serve_file_content(content: bytes, ext: str, text_extensions: set,
-                        file_path: Optional[Path] = None) -> dict:
-    import base64
-    import mimetypes
-
-    mime = mimetypes.guess_type(f"file{ext}")[0] or "application/octet-stream"
-
-    if ext in text_extensions or not ext:
-        body = content.decode("utf-8", errors="ignore")
-    else:
-        body = f"[base64]:{base64.b64encode(content).decode('ascii')}"
-
-    return {
-        "file_path": str(file_path.resolve()) if file_path else None,
-        "size": len(content),
-        "content_type": mime,
-        "content": body,
-    }
-
-
-def _try_telegram_download(token: str, file_id: str, cache_dir: Path, text_extensions: set) -> Optional[dict]:
-    import requests
-    try:
-        resp = requests.get(
-            f"https://api.telegram.org/bot{token}/getFile",
-            params={"file_id": file_id},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        if not data.get("ok"):
-            return None
-        file_path_str = data["result"]["file_path"]
-        ext = Path(file_path_str).suffix.lower()
-
-        file_resp = requests.get(
-            f"https://api.telegram.org/file/bot{token}/{file_path_str}",
-            timeout=60,
-        )
-        file_resp.raise_for_status()
-        content = file_resp.content
-
-        cache_path = cache_dir / f"{file_id}{ext}"
-        cache_path.write_bytes(content)
-        return _serve_file_content(content, ext, text_extensions, file_path=cache_path)
-    except Exception:
-        return None
-
-
-def _try_mattermost_download(base_url: str, token: str, file_id: str,
-                             cache_dir: Path, text_extensions: set) -> Optional[dict]:
-    import requests
-    import mimetypes
-    try:
-        url = f"{base_url.rstrip('/')}/api/v4/files/{file_id}"
-        resp = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=60)
-        resp.raise_for_status()
-        content = resp.content
-
-        content_type = resp.headers.get("Content-Type", "")
-        mime_type = content_type.split(";")[0].strip()
-        ext = mimetypes.guess_extension(mime_type) or ""
-
-        cache_path = cache_dir / (file_id + ext) if ext else cache_dir / file_id
-        cache_path.write_bytes(content)
-        return _serve_file_content(content, ext, text_extensions, file_path=cache_path)
-    except Exception:
-        return None
-
-
-async def _get_attached_file(args: dict) -> list[TextContent]:
-    """Get content of an attached file — cache first, then Telegram, then Mattermost."""
-    file_id = args.get("file_id", "").strip()
-    if not file_id:
-        return [TextContent(type="text", text="file_id is required.")]
-
-    config = get_config()
-    cache_dir = Path(config.get("attachments_path", "data/attachments"))
-    cache_dir.mkdir(parents=True, exist_ok=True)
-
-    text_extensions = set(config.get("text_extensions", [".txt", ".md", ".log", ".json", ".lst"]))
-
-    # 1. Cache hit (any extension — covers both Mattermost and Telegram text files)
-    cached = _find_cached_file(cache_dir, file_id)
-    if cached:
-        try:
-            result = _serve_file_content(
-                cached.read_bytes(), cached.suffix.lower(), text_extensions, file_path=cached
-            )
-            return [TextContent(type="text", text=json.dumps(result))]
-        except Exception as e:
-            return [TextContent(type="text", text=f"Error reading cached file: {e}")]
-
-    # 2. Try each enabled Telegram source
-    for src in config.get("sources", {}).values():
-        if src.get("type") == "telegram" and src.get("enabled", True) and src.get("token"):
-            result = _try_telegram_download(src["token"], file_id, cache_dir, text_extensions)
-            if result is not None:
-                return [TextContent(type="text", text=json.dumps(result))]
-
-    # 3. Try each enabled Mattermost source
-    for src in config.get("sources", {}).values():
-        if (src.get("type") == "mattermost" and src.get("enabled", True)
-                and src.get("url") and src.get("token")):
-            result = _try_mattermost_download(src["url"], src["token"],
-                                              file_id, cache_dir, text_extensions)
-            if result is not None:
-                return [TextContent(type="text", text=json.dumps(result))]
-
-    return [TextContent(type="text", text=f"File '{file_id}' not found in cache or any configured source.")]
-
-
-def _build_aliases_text(config: dict) -> str:
-    """Format user aliases for MCP output (extracted for testability).
-
-    Each group renders as a primary line "**Name** [internal] — Role (Team): aliases"
-    with role / team folded inline where present. ``reports_to`` and ``responsible_for``
-    land on an indented follow-on line so the primary line stays readable.
-    """
-    user_aliases, my_aliases = get_aliases(config)
-    parts = []
-    if my_aliases:
-        parts.append("## Current User Aliases (my_aliases)\n" + ", ".join(my_aliases))
-    if user_aliases:
-        parts.append("## Known Users")
-        for group in user_aliases:
-            name = group.get("canonical_name", "")
-            aliases = ", ".join(group.get("aliases", []))
-            tag = " [internal]" if group.get("internal") else ""
-
-            role = (group.get("role") or "").strip()
-            team = (group.get("team") or "").strip()
-            role_bit = ""
-            if role and team:
-                role_bit = f" — {role} ({team})"
-            elif role:
-                role_bit = f" — {role}"
-            elif team:
-                role_bit = f" — ({team})"
-
-            parts.append(f"- **{name}**{tag}{role_bit}: {aliases}")
-
-            extras = []
-            reports_to = (group.get("reports_to") or "").strip()
-            if reports_to:
-                extras.append(f"reports to {reports_to}")
-            responsible_for = group.get("responsible_for")
-            if responsible_for:
-                if isinstance(responsible_for, list):
-                    rf = ", ".join(str(x) for x in responsible_for if str(x).strip())
-                else:
-                    rf = str(responsible_for).strip()
-                if rf:
-                    extras.append(f"responsible for: {rf}")
-            if extras:
-                parts.append("  " + "; ".join(extras))
-    if not parts:
-        parts.append("No aliases configured.")
-    return "\n".join(parts)
-
-
-async def _get_user_aliases(_args: dict) -> list[TextContent]:
-    """Return all configured user aliases and indicate which belong to the current user."""
-    return [TextContent(type="text", text=_build_aliases_text(get_config()))]
-
-
-async def _get_health(_args: dict) -> list[TextContent]:
-    from pipeline.health import build_health_report, format_health_text
-    config = get_config()
-    report = build_health_report(get_db(), config)
-    return [TextContent(type="text", text=format_health_text(report, config))]
-
-
 def parse_args():
     """Parse command line arguments."""
     import argparse
     parser = argparse.ArgumentParser(description="Memorandum MCP Server")
     parser.add_argument(
         "--config", default="config.yaml",
-        help="Path to config.yaml (default: config.yaml)"
+        help="Path to config.yaml (default: config.yaml)",
     )
     return parser.parse_args()
-
-
-_TOOL_HANDLERS = {
-    "search_messages":           _search_messages,
-    "summarize_channel":         _summarize_channel,
-    "summarize_messages":        _summarize_messages,
-    "list_channels":             _list_channels,
-    "get_new_messages":          _get_new_messages,
-    "get_thread":                _get_thread,
-    "get_stats":                 _get_stats,
-    "get_attached_file":         _get_attached_file,
-    "get_user_aliases":          _get_user_aliases,
-    "get_health":                _get_health,
-    "send_message":              _send_message,
-    "find_by_issue":             _find_by_issue,
-    "who_mentioned":             _who_mentioned,
-    "upsert_user_alias":         _upsert_user_alias,
-    "remove_user_alias":         _remove_user_alias,
-    "update_user_alias_strings": _update_user_alias_strings,
-}
 
 
 async def main():
@@ -1109,7 +270,7 @@ async def main():
         await app.run(
             read_stream,
             write_stream,
-            app.create_initialization_options()
+            app.create_initialization_options(),
         )
 
 
