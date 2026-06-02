@@ -129,6 +129,239 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _empty_stats() -> dict:
+    return {
+        "sources_checked": 0,
+        "messages_fetched": 0,
+        "messages_filtered": 0,
+        "messages_new": 0,
+        "messages_duplicate": 0,
+        "messages_failed": 0,
+        "senders_cached": 0,
+        "channels_scanned": 0,
+        "channels_skipped": 0,
+    }
+
+
+def _initialize_sources(config: dict, db: Database, *, force: bool,
+                        text_extensions: set, attachments_path: str,
+                        youtrack_cfg: dict, source_errors: list) -> list:
+    """Build, connect, and pair each enabled source with its FilterEngine.
+
+    Returns the live `(source_name, connector, filter_engine)` triples.
+    Per-source failures append to `source_errors` and don't abort siblings.
+    """
+    connectors: list = []
+    for source_name, source_cfg in get_sources(config):
+        source_type = source_cfg.get("type")
+        source_filters = source_cfg.get("filters", {})
+
+        try:
+            connector = build_connector(
+                source_type=source_type,
+                source_name=source_name,
+                src_cfg=source_cfg,
+                db=db,
+                db_callback=db.get_channel if not force else None,
+                text_extensions=text_extensions,
+                attachments_path=attachments_path,
+                youtrack_cfg=youtrack_cfg,
+                source_filters=source_filters,
+            )
+        except Exception as e:
+            logger.error(f"[{source_name}] Failed to initialize: {e}")
+            source_errors.append({"source": source_name, "error": str(e)[:300]})
+            continue
+
+        if connector is None:
+            logger.warning(f"[{source_name}] Unknown source type '{source_type}', skipping")
+            continue
+
+        try:
+            connector.connect()
+        except Exception as e:
+            logger.error(f"[{source_name}] Failed to connect: {e}")
+            source_errors.append({"source": source_name, "error": str(e)[:300]})
+            continue
+
+        connectors.append((source_name, connector, FilterEngine(source_filters)))
+        logger.info(f"[{source_name}] {source_type} connector initialized")
+        if source_type == "mattermost" and source_filters.get("only_channels"):
+            logger.info(f"[{source_name}] only_channels: {source_filters['only_channels']}")
+
+    return connectors
+
+
+def _collect_messages(connectors: list, *, since, force: bool, since_ms: int,
+                      ingest_settings: dict, stats: dict, source_errors: list) -> list:
+    """Fan out fetch_messages, merge per-source counts into stats, return kept messages."""
+    worker_count = _resolve_worker_count(len(connectors), ingest_settings)
+    logger.info(
+        f"Fetching {len(connectors)} source(s) "
+        f"with {'1 worker (sequential)' if worker_count == 1 else f'{worker_count} workers'}"
+    )
+
+    fetch_started = time.monotonic()
+    results = _fetch_all(
+        connectors, worker_count,
+        since=since, force=force, since_ms=since_ms,
+    )
+    wall_ms = int((time.monotonic() - fetch_started) * 1000)
+    _log_fetch_summary(results, wall_ms)
+
+    all_messages: list = []
+    for r in results:
+        if r["status"] == "error":
+            source_errors.append({"source": r["source"], "error": r["error"]})
+            continue
+        stats["messages_fetched"] += r["messages_count"]
+        stats["channels_scanned"] += r["channels_scanned"]
+        stats["channels_skipped"] += r["channels_skipped"]
+        stats["messages_filtered"] += r["dropped"]
+        all_messages.extend(r["kept"])
+    return all_messages
+
+
+def _enrich_messages(messages: list, db: Database, resolver: AliasResolver,
+                     source_internal: dict) -> None:
+    """In-place: tag canonical sender, mentions_me, internal, and `_mentions`.
+
+    `email` comes from the cached senders row when present (Mattermost/Pachca
+    populate it; Telegram leaves it empty). Domain rule fires when it does.
+    Email connector additionally attaches a `_recipient_emails` list — the
+    message is internal only when sender AND every recipient are internal.
+    """
+    email_cache: dict[tuple, str | None] = {}
+    for msg in messages:
+        sender = msg.get("sender", "")
+        source = msg.get("source") or ""
+        sender_id = msg.get("sender_id") or ""
+        email = msg.get("sender_email") or None
+        if not email and source and sender_id:
+            key = (source, sender_id)
+            if key not in email_cache:
+                row = db.get_sender(source, sender_id)
+                email_cache[key] = (row or {}).get("email")
+            email = email_cache[key]
+        msg["canonical_sender"] = resolver.resolve(sender)
+        msg["mentions_me"] = 1 if resolver.mentions_me(msg.get("text", "")) else 0
+        sender_internal = resolver.is_internal(
+            sender, email=email,
+            source_internal=source_internal.get(source, False),
+        )
+        recipients = msg.pop("_recipient_emails", None)
+        if sender_internal and recipients:
+            sender_internal = all(
+                resolver.is_internal("", email=addr,
+                                     source_internal=source_internal.get(source, False))
+                for addr in recipients
+            )
+        msg["internal"] = 1 if sender_internal else 0
+        msg["_mentions"] = extract_mentions(msg.get("text", ""))
+
+
+def _cache_senders(connectors: list, messages: list, db: Database, stats: dict) -> None:
+    """Populate the senders table BEFORE message+mention inserts run.
+
+    _insert_mention_rows looks up senders.username to resolve
+    mentioned_sender_id; if senders is still empty when mentions are
+    written, those rows get NULL ids that never backfill.
+    """
+    senders_to_cache: dict = {}
+    for msg in messages:
+        sender_id = msg.get("sender_id")
+        source = msg.get("source")
+        if sender_id and source:
+            key = f"{source}:{sender_id}"
+            if key not in senders_to_cache:
+                senders_to_cache[key] = {"sender_id": sender_id, "source": source}
+
+    for source_name, connector, _ in connectors:
+        if not hasattr(connector, "get_sender_info"):
+            continue
+        for sender_data in senders_to_cache.values():
+            if sender_data["source"] != source_name:
+                continue
+            try:
+                sender_info = connector.get_sender_info(sender_data["sender_id"])
+                db.upsert_sender(sender_info)
+                stats["senders_cached"] += 1
+            except Exception as e:
+                logger.debug(f"Failed to cache sender {sender_data['sender_id']}: {e}")
+
+
+def _store_messages(messages: list, db: Database, vs: VectorStore,
+                    resolver: AliasResolver, stats: dict) -> None:
+    """Insert into SQLite + Chroma + mentions. Per-message failures are isolated."""
+    for msg in messages:
+        try:
+            if db.exists(msg["id"]):
+                stats["messages_duplicate"] += 1
+                continue
+            if db.insert(msg):
+                vs.insert(msg)
+                stats["messages_new"] += 1
+                _insert_mention_rows(db, msg, resolver)
+            else:
+                stats["messages_duplicate"] += 1
+        except Exception as e:
+            logger.error(f"Failed to store message {msg['id']}: {e}")
+            stats["messages_failed"] += 1
+
+
+def _finalize_run(db: Database, vs: VectorStore, config: dict, *,
+                  attachments_path: str, started_at: str, stats: dict,
+                  source_errors: list) -> None:
+    """Record ingest_runs + run housekeeping. Failures here never propagate."""
+    finished_at = datetime.now(timezone.utc).isoformat()
+    run_status = _ingest_status(stats["sources_checked"], source_errors)
+    try:
+        db.record_ingest_run({
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "status": run_status,
+            "sources_checked": stats["sources_checked"],
+            "messages_new": stats["messages_new"],
+            "messages_fetched": stats["messages_fetched"],
+            "errors": source_errors,
+        })
+    except Exception as e:
+        logger.warning(f"Failed to record ingest run: {e}")
+
+    # Retention / housekeeping. Only on `ok`/`partial` — never on a hard
+    # `error` since the DB may not reflect what's actually in the upstream.
+    # Failures here NEVER abort ingest; the next cycle will retry.
+    if run_status not in ("ok", "partial"):
+        return
+    try:
+        from config import get_retention_settings
+        from pipeline.housekeeping import run_housekeeping
+        ret = get_retention_settings(config)
+        report = run_housekeeping(
+            db, vs,
+            attachments_path=attachments_path,
+            retention_days=ret["retention_days"],
+            prune_interval_hours=ret["prune_interval_hours"],
+            file_cache_grace_seconds=int(ret["file_cache_grace_minutes"]) * 60,
+        )
+        if report["status"] not in ("disabled", "throttled"):
+            # Split the file-deletion count so the operator can tell
+            # "retention deleted N files" from "orphan cache cleanup swept
+            # M files" — independent activities sharing the same pass.
+            logger.info(
+                f"Housekeeping {report['status']}: "
+                f"messages={report['messages_deleted']} "
+                f"mentions={report['mentions_deleted']} "
+                f"vectors={report['vectors_deleted']} "
+                f"files=retention:{report['files_with_deleted_messages']}+"
+                f"orphans:{report['files_orphans_swept']} "
+                f"sent={report['sent_deleted']} "
+                f"runs={report['runs_deleted']}"
+            )
+    except Exception as e:
+        logger.warning(f"Housekeeping failed (ingest unaffected): {e}")
+
+
 def run_ingest(
     since: Optional[datetime] = None,
     config_path: str = "config.yaml",
@@ -152,8 +385,10 @@ def run_ingest(
     youtrack_cfg = config.get("youtrack") or {}
 
     user_aliases, my_aliases = get_aliases(config)
-    internal_domains = get_internal_domains(config)
-    resolver = AliasResolver(user_aliases, my_aliases, internal_domains=internal_domains)
+    resolver = AliasResolver(
+        user_aliases, my_aliases,
+        internal_domains=get_internal_domains(config),
+    )
     db.upsert_aliases(user_aliases)
 
     # Sources flagged internal: true mean every sender from them is a company user.
@@ -162,61 +397,20 @@ def run_ingest(
         for name, cfg in config.get("sources", {}).items()
     }
 
-    stats = {
-        "sources_checked": 0,
-        "messages_fetched": 0,
-        "messages_filtered": 0,
-        "messages_new": 0,
-        "messages_duplicate": 0,
-        "messages_failed": 0,
-        "senders_cached": 0,
-        "channels_scanned": 0,
-        "channels_skipped": 0,
-    }
+    stats = _empty_stats()
     source_errors: list[dict] = []
     started_at = datetime.now(timezone.utc).isoformat()
-    connectors = []
+    connectors: list = []
 
     try:
-        # Build one (connector, filter_engine) pair per enabled source
-        for source_name, source_cfg in get_sources(config):
-            source_type = source_cfg.get("type")
-            source_filters = source_cfg.get("filters", {})
-
-            try:
-                connector = build_connector(
-                    source_type=source_type,
-                    source_name=source_name,
-                    src_cfg=source_cfg,
-                    db=db,
-                    db_callback=db.get_channel if not force else None,
-                    text_extensions=text_extensions,
-                    attachments_path=attachments_path,
-                    youtrack_cfg=youtrack_cfg,
-                    source_filters=source_filters,
-                )
-            except Exception as e:
-                logger.error(f"[{source_name}] Failed to initialize: {e}")
-                source_errors.append({"source": source_name, "error": str(e)[:300]})
-                continue
-
-            if connector is None:
-                logger.warning(f"[{source_name}] Unknown source type '{source_type}', skipping")
-                continue
-
-            try:
-                connector.connect()
-            except Exception as e:
-                logger.error(f"[{source_name}] Failed to connect: {e}")
-                source_errors.append({"source": source_name, "error": str(e)[:300]})
-                continue
-
-            filter_engine = FilterEngine(source_filters)
-            connectors.append((source_name, connector, filter_engine))
-            logger.info(f"[{source_name}] {source_type} connector initialized")
-            if source_type == "mattermost" and source_filters.get("only_channels"):
-                logger.info(f"[{source_name}] only_channels: {source_filters['only_channels']}")
-
+        connectors = _initialize_sources(
+            config, db,
+            force=force,
+            text_extensions=text_extensions,
+            attachments_path=attachments_path,
+            youtrack_cfg=youtrack_cfg,
+            source_errors=source_errors,
+        )
         stats["sources_checked"] = len(connectors)
 
         if not connectors:
@@ -228,115 +422,19 @@ def run_ingest(
         since_ms = int(since.timestamp() * 1000)
         logger.info(f"Scanning sources since {since} ({since_ms})")
 
-        # Fetch + filter per source. Sources are independent units of work
-        # dominated by network I/O, so we fan out across a thread pool.
-        # `fetch_workers=1` keeps a strictly sequential code path (no executor)
-        # for debugging / parity with the legacy behavior.
-        ingest_settings = get_ingest_settings(config)
-        worker_count = _resolve_worker_count(len(connectors), ingest_settings)
-        logger.info(
-            f"Fetching {len(connectors)} source(s) "
-            f"with {'1 worker (sequential)' if worker_count == 1 else f'{worker_count} workers'}"
-        )
-
-        fetch_started = time.monotonic()
-        results = _fetch_all(
-            connectors, worker_count,
+        all_messages = _collect_messages(
+            connectors,
             since=since, force=force, since_ms=since_ms,
+            ingest_settings=get_ingest_settings(config),
+            stats=stats, source_errors=source_errors,
         )
-        wall_ms = int((time.monotonic() - fetch_started) * 1000)
-        _log_fetch_summary(results, wall_ms)
-
-        all_messages = []
-        for r in results:
-            if r["status"] == "error":
-                source_errors.append({"source": r["source"], "error": r["error"]})
-                continue
-            stats["messages_fetched"] += r["messages_count"]
-            stats["channels_scanned"] += r["channels_scanned"]
-            stats["channels_skipped"] += r["channels_skipped"]
-            stats["messages_filtered"] += r["dropped"]
-            all_messages.extend(r["kept"])
-
         if not all_messages:
             logger.info("No messages to store after filtering")
             return stats
 
-        # Enrich messages with canonical sender, mention flag, and extracted @mentions.
-        # `email` comes from the cached senders row when present (Mattermost/Pachca
-        # populate it; Telegram leaves it empty). Domain rule fires when it does.
-        # Email connector additionally attaches a `_recipient_emails` list — the
-        # message is internal only when sender AND every recipient is internal.
-        email_cache: dict[tuple, str | None] = {}
-        for msg in all_messages:
-            sender = msg.get("sender", "")
-            source = msg.get("source") or ""
-            sender_id = msg.get("sender_id") or ""
-            email = msg.get("sender_email") or None
-            if not email and source and sender_id:
-                key = (source, sender_id)
-                if key not in email_cache:
-                    row = db.get_sender(source, sender_id)
-                    email_cache[key] = (row or {}).get("email")
-                email = email_cache[key]
-            msg["canonical_sender"] = resolver.resolve(sender)
-            msg["mentions_me"] = 1 if resolver.mentions_me(msg.get("text", "")) else 0
-            sender_internal = resolver.is_internal(
-                sender,
-                email=email,
-                source_internal=source_internal.get(source, False),
-            )
-            recipients = msg.pop("_recipient_emails", None)
-            if sender_internal and recipients:
-                # Every recipient must also be internal under the same rules.
-                sender_internal = all(
-                    resolver.is_internal("", email=addr,
-                                         source_internal=source_internal.get(source, False))
-                    for addr in recipients
-                )
-            msg["internal"] = 1 if sender_internal else 0
-            msg["_mentions"] = extract_mentions(msg.get("text", ""))
-
-        # Cache senders BEFORE the message+mention insert loop. _insert_mention_rows
-        # looks up senders.username to fill mentions.mentioned_sender_id; if the
-        # senders table is still empty when mentions are written, every lookup
-        # misses and the column stays NULL forever for those rows.
-        senders_to_cache: dict = {}
-        for msg in all_messages:
-            sender_id = msg.get("sender_id")
-            source = msg.get("source")
-            if sender_id and source:
-                key = f"{source}:{sender_id}"
-                if key not in senders_to_cache:
-                    senders_to_cache[key] = {"sender_id": sender_id, "source": source}
-
-        for source_name, connector, _ in connectors:
-            if not hasattr(connector, "get_sender_info"):
-                continue
-            for key, sender_data in senders_to_cache.items():
-                if sender_data["source"] == source_name:
-                    try:
-                        sender_info = connector.get_sender_info(sender_data["sender_id"])
-                        db.upsert_sender(sender_info)
-                        stats["senders_cached"] += 1
-                    except Exception as e:
-                        logger.debug(f"Failed to cache sender {sender_data['sender_id']}: {e}")
-
-        for msg in all_messages:
-            try:
-                if db.exists(msg["id"]):
-                    stats["messages_duplicate"] += 1
-                    continue
-
-                if db.insert(msg):
-                    vs.insert(msg)
-                    stats["messages_new"] += 1
-                    _insert_mention_rows(db, msg, resolver)
-                else:
-                    stats["messages_duplicate"] += 1
-            except Exception as e:
-                logger.error(f"Failed to store message {msg['id']}: {e}")
-                stats["messages_failed"] += 1
+        _enrich_messages(all_messages, db, resolver, source_internal)
+        _cache_senders(connectors, all_messages, db, stats)
+        _store_messages(all_messages, db, vs, resolver, stats)
 
         logger.info(
             f"Ingest complete: {stats['messages_new']} new, "
@@ -348,54 +446,13 @@ def run_ingest(
 
     finally:
         _disconnect_all(connectors)
-        finished_at = datetime.now(timezone.utc).isoformat()
-        run_status = _ingest_status(stats["sources_checked"], source_errors)
-        try:
-            db.record_ingest_run({
-                "started_at": started_at,
-                "finished_at": finished_at,
-                "status": run_status,
-                "sources_checked": stats["sources_checked"],
-                "messages_new": stats["messages_new"],
-                "messages_fetched": stats["messages_fetched"],
-                "errors": source_errors,
-            })
-        except Exception as e:
-            logger.warning(f"Failed to record ingest run: {e}")
-
-        # Retention / housekeeping (TASK-028). Only on a successful-ish run
-        # (`ok` / `partial`) — never on a hard `error` since the DB may not
-        # reflect what's actually in the upstream. Failures here NEVER abort
-        # ingest; the next cycle will retry.
-        if run_status in ("ok", "partial"):
-            try:
-                from config import get_retention_settings
-                from pipeline.housekeeping import run_housekeeping
-                ret = get_retention_settings(config)
-                report = run_housekeeping(
-                    db, vs,
-                    attachments_path=attachments_path,
-                    retention_days=ret["retention_days"],
-                    prune_interval_hours=ret["prune_interval_hours"],
-                    file_cache_grace_seconds=int(ret["file_cache_grace_minutes"]) * 60,
-                )
-                if report["status"] not in ("disabled", "throttled"):
-                    # Split the file-deletion count so the operator can tell
-                    # "retention deleted N files" from "orphan cache cleanup
-                    # swept M files" — they're independent activities sharing
-                    # the same housekeeping pass.
-                    logger.info(
-                        f"Housekeeping {report['status']}: "
-                        f"messages={report['messages_deleted']} "
-                        f"mentions={report['mentions_deleted']} "
-                        f"vectors={report['vectors_deleted']} "
-                        f"files=retention:{report['files_with_deleted_messages']}+"
-                        f"orphans:{report['files_orphans_swept']} "
-                        f"sent={report['sent_deleted']} "
-                        f"runs={report['runs_deleted']}"
-                    )
-            except Exception as e:
-                logger.warning(f"Housekeeping failed (ingest unaffected): {e}")
+        _finalize_run(
+            db, vs, config,
+            attachments_path=attachments_path,
+            started_at=started_at,
+            stats=stats,
+            source_errors=source_errors,
+        )
 
 
 def _log_fetch_summary(results: list[dict], wall_ms: int) -> None:
