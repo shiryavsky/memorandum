@@ -6,12 +6,10 @@ from pathlib import Path
 from typing import Optional, Callable
 
 
+from ._common import DEFAULT_TEXT_EXTENSIONS, MAX_TEXT_PREVIEW_SIZE
+
 # Configure logging
 logger = logging.getLogger(__name__)
-
-# File extensions that should have content extracted (defaults, can be overridden via config)
-DEFAULT_TEXT_EXTENSIONS = {'.txt', '.log', '.md', '.markdown', '.json', '.xml', '.yaml', '.yml', '.csv', '.lst'}
-MAX_TEXT_PREVIEW_SIZE = 5 * 1024  # 5KB for message text preview only
 
 
 def _combine_purpose_header(purpose: str, header: str) -> Optional[str]:

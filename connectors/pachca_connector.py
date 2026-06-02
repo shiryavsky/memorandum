@@ -7,8 +7,9 @@ from typing import Optional, Callable
 
 logger = logging.getLogger(__name__)
 
+from ._common import DEFAULT_TEXT_EXTENSIONS, MAX_TEXT_PREVIEW_SIZE
+
 _API_BASE = "https://api.pachca.com/api/shared/v1"
-MAX_TEXT_PREVIEW_SIZE = 5 * 1024  # first 5KB inlined for text attachments
 
 
 class PachcaConnector:
@@ -41,7 +42,7 @@ class PachcaConnector:
         self._db_callback = db_callback
         self._db = db
         self._default_limit = default_limit
-        self._text_extensions = text_extensions or set()
+        self._text_extensions = text_extensions or DEFAULT_TEXT_EXTENSIONS
         self._attachments_path = attachments_path
         self._youtrack_cfg = youtrack_cfg or {}
         self._user_cache: dict = {}

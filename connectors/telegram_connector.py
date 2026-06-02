@@ -5,10 +5,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Callable
 
+from ._common import DEFAULT_TEXT_EXTENSIONS, MAX_TEXT_PREVIEW_SIZE
+
 logger = logging.getLogger(__name__)
 
-DEFAULT_TEXT_EXTENSIONS = {'.txt', '.log', '.md', '.markdown', '.json', '.xml', '.yaml', '.yml', '.csv', '.lst'}
-MAX_TEXT_PREVIEW_SIZE = 5 * 1024
 _API_BASE = "https://api.telegram.org"
 
 # Chat types where t.me/c/ permalinks are valid

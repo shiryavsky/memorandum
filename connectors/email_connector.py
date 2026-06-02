@@ -21,10 +21,11 @@ from typing import Callable, Optional
 from imap_tools import AND, MailBox, MailMessage, MailMessageFlags
 from imap_tools.consts import MailBoxFolderStatusOptions
 
+from ._common import DEFAULT_TEXT_EXTENSIONS, MAX_TEXT_PREVIEW_SIZE
+
 logger = logging.getLogger(__name__)
 
 
-MAX_TEXT_PREVIEW_SIZE = 5 * 1024  # first 5KB inlined for text attachments
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 _HTML_WS_RE = re.compile(r"\s+")
 
@@ -91,7 +92,7 @@ class EmailConnector:
         self._default_limit = default_limit
         self._db_callback = db_callback
         self._db = db
-        self._text_extensions = text_extensions or set()
+        self._text_extensions = text_extensions or DEFAULT_TEXT_EXTENSIONS
         self._attachments_path = attachments_path
         self._youtrack_cfg = youtrack_cfg or {}
 
