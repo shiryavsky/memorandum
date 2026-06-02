@@ -221,6 +221,8 @@ memorandum/
 │
 ├── connectors/                  # Source connectors
 │   ├── CONTRIBUTING.md          # ★ How to add a new connector — read first if you're extending this folder
+│   ├── _common.py               # Shared constants (text-preview size, default text extensions)
+│   ├── factory.py               # build_connector — single construction point used by ingest + MCP
 │   ├── mattermost_connector.py  # Mattermost REST API (per-channel sync)
 │   ├── telegram_connector.py    # Telegram Bot API (groups, channels, business msgs; skips bot DMs)
 │   ├── pachca_connector.py      # Pachca REST API (per-chat cursor sync)
@@ -228,6 +230,7 @@ memorandum/
 │
 ├── pipeline/                # Ingest engine (runs under systemd)
 │   ├── ingest.py            # Orchestrates fetch → filter → store, one connector per source
+│   ├── format.py            # Canonical message renderer (shared by MCP server + dashboard)
 │   ├── health.py            # Health report builder + formatter (shared by CLI and MCP)
 │   ├── alias_resolver.py    # Canonical identity resolution from user_aliases config
 │   ├── filter_engine.py     # Per-source YAML-based filtering
@@ -247,7 +250,12 @@ memorandum/
 │   └── vector_store.py      # ChromaDB embeddings
 │
 ├── mcp_server/              # MCP server
-│   └── server.py            # Claude tools
+│   ├── server.py            # App + dispatcher + accessors + main
+│   ├── schemas.py           # Tool() declarations Claude introspects
+│   ├── projectors.py        # Per-tool args redaction for the tool_calls audit log
+│   └── tools/               # One module per domain (search, digests, channels, threads,
+│       │                    # identity, files, info); flat TOOL_HANDLERS registry
+│       └── …
 │
 ├── data/                    # Local storage (gitignored)
 │   ├── messages.db          # SQLite database

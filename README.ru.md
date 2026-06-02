@@ -221,6 +221,8 @@ memorandum/
 │
 ├── connectors/                  # коннекторы к источникам
 │   ├── CONTRIBUTING.md          # ★ как добавить новый коннектор — читать до того, как лезть в эту папку
+│   ├── _common.py               # общие константы (размер inline-превью, дефолтные текстовые расширения)
+│   ├── factory.py               # build_connector — единая точка сборки для ingest'а и MCP
 │   ├── mattermost_connector.py  # Mattermost REST API (синк по каналам)
 │   ├── telegram_connector.py    # Telegram Bot API (группы, каналы, business-сообщения; DM с ботом пропускаются)
 │   ├── pachca_connector.py      # Pachca REST API (синк по курсору чата)
@@ -228,6 +230,7 @@ memorandum/
 │
 ├── pipeline/                # движок ingest'а (бежит под systemd)
 │   ├── ingest.py            # оркестратор fetch → filter → store, один коннектор на источник
+│   ├── format.py            # канонический рендерер сообщений (общий для MCP-сервера и дашборда)
 │   ├── health.py            # сборщик health-отчёта и форматтер (общий для CLI и MCP)
 │   ├── alias_resolver.py    # разрешение канонических личностей из user_aliases
 │   ├── filter_engine.py     # YAML-фильтрация на каждый источник
@@ -247,7 +250,12 @@ memorandum/
 │   └── vector_store.py      # эмбеддинги в ChromaDB
 │
 ├── mcp_server/              # MCP-сервер
-│   └── server.py            # инструменты для Claude
+│   ├── server.py            # приложение + диспетчер + accessors + main
+│   ├── schemas.py           # Tool()-декларации, которые видит Claude при интроспекции
+│   ├── projectors.py        # редакция args для аудит-лога tool_calls
+│   └── tools/               # по модулю на домен (search, digests, channels, threads,
+│       │                    # identity, files, info); плоский реестр TOOL_HANDLERS
+│       └── …
 │
 ├── data/                    # локальное хранилище (в gitignore)
 │   ├── messages.db          # SQLite-база

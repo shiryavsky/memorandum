@@ -19,16 +19,19 @@ Multiple named sources of the same type are fully supported. Each source has its
 ## Key Components
 
 ### Connectors (`connectors/`)
+- **`factory.py`** — `build_connector(source_type, source_name, src_cfg, …)` is the single construction point used by both `pipeline.ingest` and `mcp_server.server._build_live_connector`. Returns `None` for unknown types (callers log + skip). Adding a fifth connector means one new branch here, nothing else.
+- **`_common.py`** — shared constants (`MAX_TEXT_PREVIEW_SIZE` = 5KB inline preview, `DEFAULT_TEXT_EXTENSIONS` = which attachment extensions are read inline). All four connectors import from here.
 - **MattermostConnector**: REST API with Personal Access Token. Per-channel incremental sync via `last_update_at` (ms timestamp) stored in the `channels` table.
 - **TelegramConnector**: Bot API (`getUpdates`). Collects `message` (groups/supergroups), `channel_post` (channels), and `business_message` update types. Skips direct messages sent to the bot itself (`chat.type == "private"` + `message` type). Global update-offset sync — offset persisted in the `channels` table under `id="__offset__"` per source. Sender full names (first + last) cached during normalization. File attachments shown inline as `[photo, file_id=...]`, `[document: name, file_id=...]`, etc. for on-demand retrieval via `get_attached_file`.
 - **PachcaConnector**: REST API (`api.pachca.com/api/shared/v1`) with Personal Access Token. Token verified via `GET /profile` (there is no `/users/me`). Per-chat incremental sync via newest message ID stored as `last_update_at` in the `channels` table. Cursor-based pagination for both `/chats` and `/messages`. Sender name taken from the message's `display_name`; `thread_id`←`thread.id`, `reply_to_id`←`parent_message_id`. Personal (1-on-1) chats have no `name`, so the display name is the partner's name (resolved from `member_ids` minus the current user) and the `channels.name` column falls back to the chat id (never empty). Attachments (`Message.files`) are embedded inline as `[image|file: name, file_id=<id>]` and downloaded into the file cache at ingest (signed URLs expire), retrievable via `get_attached_file`.
 - **EmailConnector**: IMAP via `imap_tools` (username/password; OAuth2 deferred). One mailbox per source. Polls configured `folders:` (default `["INBOX"]`); each folder maps to one channel (`channel_id = "folder:<folder_path>"`, `display_name = folder_path` or remap via `channel_names:`). Incremental sync is per-folder UIDVALIDITY + last-seen UID stored in `channels.extra` (`{"uidvalidity": N, "last_uid": M}`); a UIDVALIDITY change forces a full rescan of that folder. Each email becomes one message: `id = "{source}:{Message-ID}"` (UID-based fallback when Message-ID absent), `sender` = From display name, `sender_id` / `sender_email` = From address (lowercased), `text` = `Subject: ...\n\n<plain body>` with attachment markers appended, `thread_id` = first reference from `References:` (or own Message-ID for orphans), `reply_to_id` = `In-Reply-To`. Raw block keeps `from`, `to`/`cc` (list of `{name, email}` dicts), `subject`, `message_id`, `in_reply_to`, `references`, `folder`, `uid`. Attachments cached by sha1 of the payload (mirrors Pachca/Mattermost), with text files inlined first 5KB. `send_message` does NOT send via SMTP — it builds an RFC 5322 reply (reply-all minus self by default, derived from the parent's From/To/Cc; `Re:` subject; `In-Reply-To` + extended `References`; fresh Message-ID; `text/plain` body) and IMAP-APPENDs it to the configured `drafts_folder` with `\Draft \Seen` flags. `fetch_new` raises `NotImplementedError` and the MCP `_get_new_messages` handler punts with a clear message — IMAP polling is too heavy for live reads in v1.
 
 ### Pipeline (`pipeline/`)
-- **ingest.py**: Iterates `config["sources"]`, creates one connector + FilterEngine per enabled source, fetches, filters, and stores. Per-source exceptions are caught and recorded; a failing source does not abort the run. Records each run to the `ingest_runs` table with status `ok`/`partial`/`error`.
+- **ingest.py**: Iterates `config["sources"]`, creates one connector + FilterEngine per enabled source, fetches, filters, and stores. Per-source exceptions are caught and recorded; a failing source does not abort the run. Records each run to the `ingest_runs` table with status `ok`/`partial`/`error`. The orchestrator `run_ingest()` is a thin top-level that calls phase helpers (`_initialize_sources`, `_collect_messages`, `_enrich_messages`, `_cache_senders`, `_store_messages`, `_finalize_run`) — each in its own private function for testability.
+- **format.py**: Canonical message renderer — `format_message`, `format_timestamp`, `make_message_url`, `get_display_tz`, `ext_marker`. Shared by `mcp_server.server` (re-exports for back-compat) and any future exporter so display style doesn't drift between surfaces.
 - **health.py**: Shared health computation (`build_health_report`) and formatting (`format_health_text`). No MCP or connector imports — used by both the CLI and the `get_health` MCP tool so they never drift.
 - **filter_engine.py**: Per-source rules — `skip_senders` (matches sender id, display name, AND email address), `skip_channels`, `only_channels`, `skip_patterns`. Email-only keys: `skip_folders` (skip whole folder by name; also matches `channel_id` of the form `folder:<name>`) and `skip_subjects` (regex against the email Subject). No global `skip_sources` (use `enabled: false` instead).
-- **scheduler.py**: Fallback scheduler (non-systemd only).
+- **scheduler.py**: Fallback scheduler for non-systemd environments. Takes `/tmp/memorandum-sync.lock` per tick (same flock as `bin/memorandum-sync` and `memorandum reindex-chroma`) so polling can't race a manually-triggered sync.
 
 ### Scheduling (systemd-based for Linux)
 - **bin/memorandum-sync**: Bash script with `flock` for exclusive execution
@@ -40,7 +43,24 @@ Multiple named sources of the same type are fully supported. Each source has its
 - **vector_store.py**: ChromaDB for semantic embedding search
 
 ### MCP Server (`mcp_server/`)
-Exposes these tools to Claude:
+
+The package is split for navigability:
+
+- **`server.py`** (~280 lines) — `Server` instance, the two decorated entry points (`list_tools`, `call_tool`), shared singletons (`_db` / `_vs` / `_config` / `_resolver`) with their lazy accessors, the `_build_live_connector` helper, `_invalidate_config_cache`, the dispatcher (looks `name` up in `TOOL_HANDLERS`), and `main`. Re-exports every handler/helper by name for back-compat with the test suite's `from mcp_server.server import _<name>` imports.
+- **`schemas.py`** — every `Tool(...)` declaration in one place (`tool_schemas()`). What Claude sees when it introspects the server.
+- **`projectors.py`** — `TOOL_ARG_PROJECTORS` + `args_summary_for`. Each entry redacts a tool's `arguments` dict to a safe-and-useful shape before it lands in the `tool_calls` audit table (e.g. `send_message` records `text_len`, never the body).
+- **`tools/`** — one module per domain, each exporting handler functions plus their domain-local helpers. The package-level `__init__.py` builds the flat `TOOL_HANDLERS` mapping the dispatcher reads:
+  - `tools/search.py` — `_search_messages`
+  - `tools/digests.py` — `_summarize_channel`, `_summarize_messages`, channel-description helpers
+  - `tools/channels.py` — `_list_channels`, `_get_new_messages`, `_send_message`, send helpers
+  - `tools/threads.py` — `_get_thread`, `_find_by_issue`, `_who_mentioned`
+  - `tools/identity.py` — `_get_user_aliases` + the three `*_user_alias*` write tools + edit guards
+  - `tools/files.py` — `_get_attached_file` + cache / Telegram / Mattermost download helpers
+  - `tools/info.py` — `_get_stats`, `_get_health`
+
+Tools access shared state via `from mcp_server import server as _srv` then `_srv.get_db()` at call time. The runtime attribute lookup means `unittest.mock.patch("mcp_server.server.get_db")` keeps working through the indirection.
+
+Tools exposed to Claude:
 - `search_messages`: Keyword or semantic search. `source` parameter takes a source name (e.g., `company_mattermost`). Supports `mentions_me` boolean filter.
 - `summarize_channel`: Get recent messages from a channel.
 - `summarize_messages`: Digest of messages from a flexible time range (hours/days), grouped by `[source] channel`.

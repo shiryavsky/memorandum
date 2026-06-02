@@ -221,6 +221,8 @@ memorandum/
 │
 ├── connectors/                  # Quell-Konnektoren
 │   ├── CONTRIBUTING.md          # ★ Wie man einen neuen Konnektor hinzufügt — erst lesen, bevor du diesen Ordner erweiterst
+│   ├── _common.py               # Geteilte Konstanten (Preview-Größe, Default-Text-Extensions)
+│   ├── factory.py               # build_connector — eine Baustelle für Ingest und MCP
 │   ├── mattermost_connector.py  # Mattermost REST API (Per-Channel-Sync)
 │   ├── telegram_connector.py    # Telegram Bot API (Gruppen, Channels, Business-Msgs; Bot-DMs werden übersprungen)
 │   ├── pachca_connector.py      # Pachca REST API (Per-Chat-Cursor-Sync)
@@ -228,6 +230,7 @@ memorandum/
 │
 ├── pipeline/                # Ingest-Engine (läuft unter systemd)
 │   ├── ingest.py            # Orchestriert fetch → filter → store, ein Konnektor pro Quelle
+│   ├── format.py            # Kanonischer Nachrichten-Renderer (geteilt zwischen MCP-Server + Dashboard)
 │   ├── health.py            # Health-Report-Builder + Formatter (von CLI und MCP geteilt)
 │   ├── alias_resolver.py    # Kanonische Identitätsauflösung aus user_aliases-Config
 │   ├── filter_engine.py     # YAML-basiertes Filtern pro Quelle
@@ -247,7 +250,12 @@ memorandum/
 │   └── vector_store.py      # ChromaDB-Embeddings
 │
 ├── mcp_server/              # MCP-Server
-│   └── server.py            # Claude-Tools
+│   ├── server.py            # App + Dispatcher + Accessors + main
+│   ├── schemas.py           # Tool()-Deklarationen, die Claude per Introspection sieht
+│   ├── projectors.py        # Pro-Tool-Args-Redaktion fürs tool_calls-Audit-Log
+│   └── tools/               # Ein Modul pro Domäne (search, digests, channels, threads,
+│       │                    # identity, files, info); flaches TOOL_HANDLERS-Register
+│       └── …
 │
 ├── data/                    # Lokale Speicherung (gitignored)
 │   ├── messages.db          # SQLite-Datenbank

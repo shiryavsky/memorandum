@@ -221,6 +221,8 @@ memorandum/
 │
 ├── connectors/                  # 源连接器
 │   ├── CONTRIBUTING.md          # ★ 如何添加新连接器 —— 扩展本目录前必读
+│   ├── _common.py               # 共享常量（inline 预览大小、默认文本扩展名集合）
+│   ├── factory.py               # build_connector —— ingest 与 MCP 共用的单一构造点
 │   ├── mattermost_connector.py  # Mattermost REST API（按频道同步）
 │   ├── telegram_connector.py    # Telegram Bot API（群组、频道、business 消息；跳过与机器人的私聊）
 │   ├── pachca_connector.py      # Pachca REST API（按频道游标同步）
@@ -228,6 +230,7 @@ memorandum/
 │
 ├── pipeline/                # ingest 引擎（在 systemd 下运行）
 │   ├── ingest.py            # 编排 fetch → filter → store，每个源一个连接器
+│   ├── format.py            # 规范的消息渲染器（MCP 服务器与 dashboard 共用）
 │   ├── health.py            # 健康报告构建与格式化（CLI 与 MCP 共用）
 │   ├── alias_resolver.py    # 从 user_aliases 配置中做规范身份解析
 │   ├── filter_engine.py     # 基于 YAML 的按源过滤
@@ -247,7 +250,12 @@ memorandum/
 │   └── vector_store.py      # ChromaDB embedding
 │
 ├── mcp_server/              # MCP 服务器
-│   └── server.py            # Claude 工具
+│   ├── server.py            # 应用 + 调度器 + accessors + main
+│   ├── schemas.py           # Claude 自省时看到的 Tool() 声明
+│   ├── projectors.py        # tool_calls 审计日志的逐工具参数脱敏
+│   └── tools/               # 按领域拆分（search、digests、channels、threads、
+│       │                    # identity、files、info）；平铺的 TOOL_HANDLERS 注册表
+│       └── …
 │
 ├── data/                    # 本地存储（gitignored）
 │   ├── messages.db          # SQLite 数据库

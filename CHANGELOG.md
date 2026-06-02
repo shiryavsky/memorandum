@@ -11,6 +11,140 @@ This document captures the WHY that doesn't fit in commit messages.
 
 ---
 
+## MCP server split: `schemas.py`, `projectors.py`, `tools/`
+
+`mcp_server/server.py` had grown to 1717 lines — `Server` setup, 16
+`Tool()` schemas (~415 lines), 16 async tool handlers and their helpers
+(~960 lines), the `tool_calls` args projectors (~50 lines), the
+dispatcher, and `main`. Everything was discoverable only by scrolling.
+Refactored into a small package:
+
+- **`mcp_server/server.py`** (now ~280 lines) — `Server` instance,
+  decorated `list_tools` / `call_tool`, the lazy accessors
+  (`get_db` / `get_vs` / `get_config` / `get_resolver`),
+  `_invalidate_config_cache`, `_build_live_connector`, the dispatcher,
+  and `main`. Re-exports every moved handler by name so
+  `from mcp_server.server import _<handler>` test imports keep working.
+- **`mcp_server/schemas.py`** — `tool_schemas()` returns the list of
+  `Tool(...)` declarations. Adding/editing a description no longer
+  means scrolling past every handler body.
+- **`mcp_server/projectors.py`** — `TOOL_ARG_PROJECTORS` +
+  `args_summary_for()`. Each entry redacts a tool's args before they
+  land in `tool_calls` so the dashboard's MCP-usage panel doesn't leak
+  message bodies, search queries, or alias payloads.
+- **`mcp_server/tools/`** — one module per domain, each owning its
+  handlers and domain-local helpers; the package `__init__.py`
+  collects them into a flat `TOOL_HANDLERS` mapping the dispatcher
+  reads:
+  - `search.py`   — `_search_messages`
+  - `digests.py`  — `_summarize_channel`, `_summarize_messages`
+  - `channels.py` — `_list_channels`, `_get_new_messages`, `_send_message`
+  - `threads.py`  — `_get_thread`, `_find_by_issue`, `_who_mentioned`
+  - `identity.py` — `_get_user_aliases` + the three alias-write tools
+  - `files.py`    — `_get_attached_file` + download helpers
+  - `info.py`     — `_get_stats`, `_get_health`
+
+- **Why a runtime indirection for shared state.** Tools import the
+  server module (`from mcp_server import server as _srv`) and call
+  `_srv.get_db()` at runtime rather than binding the function at
+  import time. The attribute lookup makes
+  `unittest.mock.patch("mcp_server.server.get_db")` continue to work
+  through the move — all 72 existing test patches stayed unchanged.
+- **Why `_build_live_connector` and `_invalidate_config_cache` stayed
+  in `server.py`.** The first is patched at that import path by
+  multiple tests; the second mutates server's module globals.
+
+626 tests pass unchanged at every commit of the split (extracted in
+three steps: schemas, projectors, then handlers). Touchpoints:
+`mcp_server/server.py`, the three new modules above, and the
+`mcp_server/tools/` package.
+
+---
+
+## Refactor pass: smaller modules, registries, fewer god functions
+
+A batch of medium-sized cleanups that landed together; each commit is
+independently green against the 626-test suite, but the rationale is
+shared.
+
+- **Shared connector constants → `connectors/_common.py`.**
+  `MAX_TEXT_PREVIEW_SIZE = 5 * 1024` was repeated verbatim in all four
+  connector files. `DEFAULT_TEXT_EXTENSIONS` was defined twice
+  (Mattermost + Telegram) and absent from Pachca + Email — those two
+  fell back to `set()`, so a caller that didn't pass `text_extensions`
+  got no inline text previews. One source of truth now; Pachca and
+  Email default to the same set as the others.
+- **Canonical message renderer → `pipeline/format.py`.**
+  `format_message`, `format_timestamp`, `make_message_url`,
+  `get_display_tz`, and `ext_marker` lived on `mcp_server/server.py`.
+  They're not MCP-specific — the dashboard and a future Markdown
+  exporter need them too. Moved out; `mcp_server.server` re-imports
+  the same names so existing test imports keep working without churn.
+- **`AliasResolver` caching** — `get_resolver()` in `mcp_server.server`
+  builds the resolver lazily and keys the cache on `id(config)`, so
+  `_invalidate_config_cache` and test patches of `get_config()` both
+  trigger a rebuild without anyone remembering to null out an extra
+  field.
+- **Dispatcher registry** — the 36-line `if/elif` ladder in
+  `_dispatch_tool` was replaced by a `{name: handler}` dict. Adding a
+  tool is now one line. Mirrors the projector dict that already lived
+  beside it.
+- **`build_connector` factory in `connectors/factory.py`** — both
+  `pipeline.ingest` and `mcp_server.server._build_live_connector` had
+  near-identical four-arm `if source_type == …` ladders. One factory
+  drives both call sites; ingest's connect/connector-init split is
+  also cleaner now (build, connect, attach FilterEngine are separate
+  try blocks). Tests that patched
+  `pipeline.ingest.<X>Connector` now patch
+  `connectors.factory.<X>Connector` — the import moved with the call
+  site.
+- **`run_ingest` split into phases.** The 320-line function became a
+  ~75-line orchestrator that calls private phase helpers
+  (`_initialize_sources`, `_collect_messages`, `_enrich_messages`,
+  `_cache_senders`, `_store_messages`, `_finalize_run`). The shared
+  `stats` dict still flows through in-place mutation so the contract
+  with existing tests stays identical.
+
+---
+
+## Project audit: six small bug fixes
+
+A focused sweep prompted by a project-wide read-through. None of these
+were the kind of thing that would surface as a loud failure — they're
+exactly the cases where the symptom is "intermittent" or "didn't do
+anything when I expected it to."
+
+1. **`daily_digest` was wired but unreachable.** The dispatcher had
+   an arm for it and the args projector had a redaction entry, but
+   `list_tools()` never published a `Tool(...)` declaration — clients
+   never saw it. Removed entirely; `summarize_messages(hours=24)`
+   covers the same surface.
+2. **`connectors/__init__.py` re-exported only Mattermost + Telegram.**
+   `from connectors import PachcaConnector` (or `EmailConnector`)
+   raised `ImportError` despite the classes living in the package.
+   Aligned the `__all__` list.
+3. **`pipeline.scheduler --systemd` did nothing on macOS.** `main()`
+   set `os.environ["SYSTEMD_MODE"]` and called `run_scheduler`, but
+   `_is_systemd_mode()` only inspected `DISABLE_SYSTEMD_CHECK` and
+   `/run/systemd/system` — never the env var. The flag was dead.
+   Print instructions and exit directly.
+4. **The fallback scheduler had no flock.** Polling-mode `run_ingest`
+   shared SQLite and Chroma with whatever `bin/memorandum-sync` or
+   `reindex-chroma` might be doing, but never took the lock. Acquires
+   the same `/tmp/memorandum-sync.lock` per tick; skips with a
+   warning if it's held.
+5. **`_invalidate_config_cache` only cleared `_config`.** `_db` and
+   `_vs` were built from `_config["sqlite_path"]` /
+   `_config["chroma_path"]` — a path change in the new YAML would be
+   silently ignored, the next `get_db()` returning the old handle.
+   Now closes the DB and resets both handles (and `_resolver`) so
+   the next call reopens against the current config.
+6. **`export/` package was aspirational only.** A single function
+   with `TODO: implement this` and no caller. A stub that implies a
+   feature exists is worse than no module — deleted.
+
+---
+
 ## Removed `find_decisions` MCP tool
 
 The tool ran a semantic search against the vector store using a hardcoded
