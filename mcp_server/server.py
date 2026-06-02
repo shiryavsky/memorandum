@@ -639,8 +639,6 @@ async def _dispatch_tool(name: str, arguments: dict) -> list[TextContent]:
         return await _summarize_channel(arguments)
     elif name == "summarize_messages":
         return await _summarize_messages(arguments)
-    elif name == "daily_digest":
-        return await _daily_digest(arguments)
     elif name == "list_channels":
         return await _list_channels(arguments)
     elif name == "get_new_messages":
@@ -707,7 +705,6 @@ _TOOL_ARG_PROJECTORS = {
     "get_thread": lambda a: {"thread_id": a.get("thread_id"), "limit": a.get("limit")},
     "summarize_channel": lambda a: {"channel": a.get("channel"), "hours": a.get("hours")},
     "summarize_messages": lambda a: {"hours": a.get("hours"), "since": a.get("since")},
-    "daily_digest": lambda a: {"hours": a.get("hours")},
 }
 
 
@@ -825,42 +822,6 @@ async def _summarize_channel(args: dict) -> list[TextContent]:
         if url:
             line += f" 🔗 {url}"
         parts.append(line)
-
-    return [TextContent(type="text", text="\n".join(parts))]
-
-
-async def _daily_digest(args: dict) -> list[TextContent]:
-    """Generate a digest of messages from the last 24 hours."""
-    since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-
-    rows = get_db().search(
-        source=args.get("source"),
-        since=since,
-        limit=500
-    )
-
-    if not rows:
-        return [TextContent(
-            type="text",
-            text="No messages in the last 24 hours."
-        )]
-
-    # Group by (source, channel)
-    by_channel: dict[tuple, list] = {}
-    for r in rows:
-        key = (r['source'], r['channel'])
-        by_channel.setdefault(key, []).append(r)
-
-    config = get_config()
-    parts = ["# Daily Message Digest\n"]
-    for (src, ch), msgs in by_channel.items():
-        parts.append(f"\n## [{src}] {ch} ({len(msgs)} messages)\n")
-        for m in msgs[:10]:
-            url = make_message_url(m, config)
-            link = f" 🔗 {url}" if url else ""
-            parts.append(f"- **{m['sender']}**{_ext_marker(m)}: {m['text'][:120]}{link}")
-        if len(msgs) > 10:
-            parts.append(f"- ... and {len(msgs) - 10} more")
 
     return [TextContent(type="text", text="\n".join(parts))]
 
