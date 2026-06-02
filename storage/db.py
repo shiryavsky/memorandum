@@ -227,6 +227,25 @@ class Database:
         self.conn.commit()
         return cursor.rowcount > 0
 
+    def resolve_channel(
+        self, channel: str, source: Optional[str] = None
+    ) -> Optional[dict]:
+        """Resolve a channel id, name, or display_name to the channel row.
+
+        When `source` is omitted, name/id collisions across sources silently
+        pick the first match — callers that have a source hint should pass it.
+        """
+        clauses = ["(c.display_name = ? OR c.name = ? OR c.id = ?)"]
+        params: list = [channel, channel, channel]
+        if source:
+            clauses.append("c.source = ?")
+            params.append(source)
+        row = self.conn.execute(
+            "SELECT c.* FROM channels c WHERE " + " AND ".join(clauses) + " LIMIT 1",
+            params,
+        ).fetchone()
+        return dict(row) if row else None
+
     def search(
         self,
         query: Optional[str] = None,
@@ -251,8 +270,8 @@ class Database:
             clauses.append("m.source = ?")
             params.append(source)
         if channel:
-            clauses.append("(c.display_name = ? OR c.name = ?)")
-            params.extend([channel, channel])
+            clauses.append("(c.display_name = ? OR c.name = ? OR c.id = ?)")
+            params.extend([channel, channel, channel])
         if sender:
             clauses.append("(m.sender = ? OR m.canonical_sender = ?)")
             params.extend([sender, sender])

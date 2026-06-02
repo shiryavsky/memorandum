@@ -5,6 +5,7 @@ Verbs:
   memorandum aliases refresh [--config FILE] [--in-place] [--json]
   memorandum prune [--dry-run | --commit] [--days N] [--config FILE] [--json]
   memorandum dashboard [--refresh N] [--config FILE] [--once] [--no-color]
+  memorandum reindex-chroma [--config FILE] [--json]
 """
 import argparse
 import sys
@@ -73,6 +74,16 @@ def main(argv=None):
                              "config needed). Use for screenshots and README assets.")
     p_dash.set_defaults(func=_run_dashboard)
 
+    p_reindex = sub.add_parser(
+        "reindex-chroma",
+        help="Wipe and rebuild the chroma vector store from SQLite "
+             "(acquires the sync lock; safe but slow).",
+    )
+    p_reindex.add_argument("--config", default="config.yaml", help="Path to config.yaml")
+    p_reindex.add_argument("--json", action="store_true",
+                           help="Emit the report as JSON instead of human text.")
+    p_reindex.set_defaults(func=_run_reindex)
+
     parsed = parser.parse_args(argv)
     parsed.func(parsed)
 
@@ -99,6 +110,11 @@ def _run_dashboard(args):
     from cli.dashboard import run
     run(config_path=args.config, refresh=args.refresh,
         once=args.once, no_color=args.no_color, mock=args.mock)
+
+
+def _run_reindex(args):
+    from cli.reindex import run
+    run(config_path=args.config, as_json=args.json)
 
 
 if __name__ == "__main__":

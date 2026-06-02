@@ -47,7 +47,7 @@ Memorandum runs locally — your messages and attachments never leave your machi
 - **MCP server** with tools for search, summarize, digest, decisions, threads, issue lookup, and file access
 - **Send back** (opt-in, per-source gate) — Telegram business chats supported; email replies land in your Drafts folder for review
 - **Retention / housekeeping** — automatic pruning of old messages + vectors; content-addressed attachment sweep keeps anything still referenced
-- **CLI**: `./bin/memorandum {health, dashboard, aliases refresh, prune}` — live terminal TUI plus housekeeping tools
+- **CLI**: `./bin/memorandum {health, dashboard, aliases refresh, prune, reindex-chroma}` — live terminal TUI plus housekeeping tools
 
 For implementation details (architecture, schemas, sync internals), see [AGENTS.md](AGENTS.md).
 
@@ -239,7 +239,8 @@ memorandum/
 │   ├── aliases.py           # `memorandum aliases refresh` — append-only stub generator
 │   ├── alias_writer.py      # Shared YAML round-trip surface (used by refresh + MCP write tools)
 │   ├── prune.py             # `memorandum prune` — dry-run retention preview / --commit
-│   └── dashboard.py         # `memorandum dashboard` — live rich TUI (read-only DB connection)
+│   ├── dashboard.py         # `memorandum dashboard` — live rich TUI (read-only DB connection)
+│   └── reindex.py           # `memorandum reindex-chroma` — wipe + rebuild chroma from SQLite
 │
 ├── storage/                 # Storage layer
 │   ├── db.py                # SQLite metadata store
@@ -362,7 +363,10 @@ User-facing tools live under `cli/`. The wrapper `./bin/memorandum` resolves the
 ./bin/memorandum health --json                   # machine-readable
 ./bin/memorandum aliases refresh                 # print stub user_aliases entries for new senders
 ./bin/memorandum aliases refresh --in-place      # append those stubs into config.yaml
+./bin/memorandum reindex-chroma                  # wipe and rebuild the vector store from SQLite
 ```
+
+`reindex-chroma` takes the same `/tmp/memorandum-sync.lock` as `bin/memorandum-sync`, so a running sync (or another reindex) blocks it cleanly instead of racing. Use it to recover from a corrupted chroma directory, to backfill metadata after a schema fix, or as the rebuild step when swapping embedding models.
 
 Exit codes for `health`: `0`=ok, `1`=partial/error, `2`=never ran — usable as a monitoring check (`./bin/memorandum health && echo healthy || echo check logs`). The same data is available from Claude via the `get_health` MCP tool.
 
@@ -441,7 +445,7 @@ Suggested alternatives:
 **Important — dimensionality:** Chroma stores vectors at a fixed dimension per collection. Pointing `model:` at a different model (or a different output size) silently breaks similarity search unless every document is re-embedded. Memorandum surfaces a clear error on the first insert if the existing collection's dim doesn't match the configured model, but you should still pick a migration path before swapping:
 
 1. **Keep the old vectors around.** Set `collection_name:` to a fresh value (e.g. `messages_bge_small`). The old collection stays on disk; the new model populates the new one.
-2. **Start clean.** Stop ingest, `rm -rf data/chroma/`, then `./run_ingest.sh --hours <N>` to re-embed everything.
+2. **Start clean.** Run `./bin/memorandum reindex-chroma` — it acquires the sync lock, deletes the chroma directory, and re-embeds every message currently in SQLite using the configured model.
 
 ## Extending Memorandum
 

@@ -752,14 +752,26 @@ async def _search_messages(args: dict) -> list[TextContent]:
     mode = args.get("mode", "semantic")
     limit = args.get("limit", 20)
     filter_mentions_me = args.get("mentions_me", False)
+    source = args.get("source")
+    channel = args.get("channel")
+
+    # Resolve channel id/name/display_name to the canonical channel_id so the
+    # Chroma metadata filter (which stores channel_id) and SQLite path agree.
+    # Pinning source from the resolved row also disambiguates cross-source name
+    # collisions for the rest of the call.
+    if channel:
+        ch_row = get_db().resolve_channel(channel, source)
+        if ch_row:
+            channel = ch_row["id"]
+            source = source or ch_row["source"]
 
     if mode == "semantic":
         # Semantic search using vector embeddings
         hits = get_vs().semantic_search(
             query=args["query"],
             n_results=limit,
-            source=args.get("source"),
-            channel=args.get("channel"),
+            source=source,
+            channel=channel,
             since=args.get("since")
         )
 
@@ -786,8 +798,8 @@ async def _search_messages(args: dict) -> list[TextContent]:
         # Keyword search using SQLite LIKE
         rows = get_db().search(
             query=args["query"],
-            source=args.get("source"),
-            channel=args.get("channel"),
+            source=source,
+            channel=channel,
             since=args.get("since"),
             mentions_me=filter_mentions_me,
             limit=limit

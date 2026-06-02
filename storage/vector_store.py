@@ -107,7 +107,7 @@ class VectorStore:
 
         metadata = {
             "source": msg.get("source", ""),
-            "channel": msg.get("channel") or "",
+            "channel": msg.get("channel") or msg.get("channel_id") or "",
             "sender": msg.get("sender") or "",
             "timestamp": msg.get("timestamp") or "",
         }

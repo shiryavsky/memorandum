@@ -47,7 +47,7 @@ Memorandum работает локально — ваши сообщения и 
 - **MCP-сервер** с инструментами для поиска, summarize, дайджеста, решений, тредов, поиска по issue и доступа к файлам
 - **Отправка ответов** (opt-in, по галке на источник) — поддерживаются Telegram business-чаты; ответы на письма уходят в папку Drafts на ревью
 - **Retention / housekeeping** — автоматическое удаление старых сообщений и векторов; content-addressed sweep вложений оставляет всё, на что ещё кто-то ссылается
-- **CLI**: `./bin/memorandum {health, dashboard, aliases refresh, prune}` — терминальный TUI и housekeeping-инструменты
+- **CLI**: `./bin/memorandum {health, dashboard, aliases refresh, prune, reindex-chroma}` — терминальный TUI и housekeeping-инструменты
 
 Детали реализации (архитектура, схемы, внутренности синка) — в [AGENTS.md](AGENTS.md).
 
@@ -239,7 +239,8 @@ memorandum/
 │   ├── aliases.py           # `memorandum aliases refresh` — append-only-генератор стабов
 │   ├── alias_writer.py      # общая YAML-round-trip-прослойка (используется refresh + MCP-инструментами на запись)
 │   ├── prune.py             # `memorandum prune` — dry-run-предпросмотр retention'а / --commit
-│   └── dashboard.py         # `memorandum dashboard` — live rich TUI (read-only DB)
+│   ├── dashboard.py         # `memorandum dashboard` — live rich TUI (read-only DB)
+│   └── reindex.py           # `memorandum reindex-chroma` — снос и пересборка chroma из SQLite
 │
 ├── storage/                 # слой хранения
 │   ├── db.py                # SQLite-хранилище метаданных
@@ -362,7 +363,10 @@ pytest tests/ --cov=. --cov-report=term-missing --ignore=storage/vector_store.py
 ./bin/memorandum health --json                   # машиночитаемый вывод
 ./bin/memorandum aliases refresh                 # напечатать stub user_aliases для новых отправителей
 ./bin/memorandum aliases refresh --in-place      # дописать эти стабы прямо в config.yaml
+./bin/memorandum reindex-chroma                  # снести и пересобрать векторное хранилище из SQLite
 ```
+
+`reindex-chroma` берёт тот же `/tmp/memorandum-sync.lock`, что и `bin/memorandum-sync`, — поэтому идущий синк (или другой reindex) аккуратно блокирует его, а не гонит наперегонки. Используйте после повреждения chroma, для backfill метаданных после фикса схемы, либо как шаг пересборки при смене embedding-модели.
 
 Exit-коды `health`: `0`=всё ок, `1`=частично/ошибка, `2`=никогда не запускался — пригодно как мониторинг (`./bin/memorandum health && echo healthy || echo check logs`). Те же данные из Claude — через MCP-инструмент `get_health`.
 
@@ -441,7 +445,7 @@ embedding:
 **Важно — размерность:** Chroma хранит векторы фиксированной размерности на коллекцию. Указать `model:` другую модель (или другую размерность) — и поиск по близости молча сломается, пока вы не переэмбедите все документы. Memorandum при первой вставке отдаёт понятную ошибку, если размерность существующей коллекции не совпадает с настроенной моделью, но перед сменой всё равно выберите путь миграции:
 
 1. **Сохранить старые векторы.** Поставить `collection_name:` в новое значение (например, `messages_bge_small`). Старая коллекция останется на диске; новая модель наполняет новую.
-2. **Начать с чистого листа.** Остановить ingest, `rm -rf data/chroma/`, потом `./run_ingest.sh --hours <N>` — переэмбедить всё.
+2. **Начать с чистого листа.** Запустить `./bin/memorandum reindex-chroma` — он возьмёт sync-lock, удалит каталог chroma и переэмбедит все сообщения из SQLite текущей моделью.
 
 ## Расширение Memorandum
 
