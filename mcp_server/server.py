@@ -553,40 +553,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
 async def _dispatch_tool(name: str, arguments: dict) -> list[TextContent]:
     """Pure routing — kept separate from call_tool so the logging wrapper stays small."""
-    if name == "search_messages":
-        return await _search_messages(arguments)
-    elif name == "summarize_channel":
-        return await _summarize_channel(arguments)
-    elif name == "summarize_messages":
-        return await _summarize_messages(arguments)
-    elif name == "list_channels":
-        return await _list_channels(arguments)
-    elif name == "get_new_messages":
-        return await _get_new_messages(arguments)
-    elif name == "get_thread":
-        return await _get_thread(arguments)
-    elif name == "get_stats":
-        return await _get_stats(arguments)
-    elif name == "get_attached_file":
-        return await _get_attached_file(arguments)
-    elif name == "get_user_aliases":
-        return await _get_user_aliases(arguments)
-    elif name == "get_health":
-        return await _get_health(arguments)
-    elif name == "send_message":
-        return await _send_message(arguments)
-    elif name == "find_by_issue":
-        return await _find_by_issue(arguments)
-    elif name == "who_mentioned":
-        return await _who_mentioned(arguments)
-    elif name == "upsert_user_alias":
-        return await _upsert_user_alias(arguments)
-    elif name == "remove_user_alias":
-        return await _remove_user_alias(arguments)
-    elif name == "update_user_alias_strings":
-        return await _update_user_alias_strings(arguments)
-    else:
+    handler = _TOOL_HANDLERS.get(name)
+    if handler is None:
         return [TextContent(type="text", text=f"Unknown tool: {name}")]
+    return await handler(arguments)
 
 
 # ── Per-tool args_summary redaction (TASK-026) ───────────────────────────────
@@ -1588,6 +1558,26 @@ def parse_args():
         help="Path to config.yaml (default: config.yaml)"
     )
     return parser.parse_args()
+
+
+_TOOL_HANDLERS = {
+    "search_messages":           _search_messages,
+    "summarize_channel":         _summarize_channel,
+    "summarize_messages":        _summarize_messages,
+    "list_channels":             _list_channels,
+    "get_new_messages":          _get_new_messages,
+    "get_thread":                _get_thread,
+    "get_stats":                 _get_stats,
+    "get_attached_file":         _get_attached_file,
+    "get_user_aliases":          _get_user_aliases,
+    "get_health":                _get_health,
+    "send_message":              _send_message,
+    "find_by_issue":             _find_by_issue,
+    "who_mentioned":             _who_mentioned,
+    "upsert_user_alias":         _upsert_user_alias,
+    "remove_user_alias":         _remove_user_alias,
+    "update_user_alias_strings": _update_user_alias_strings,
+}
 
 
 async def main():
