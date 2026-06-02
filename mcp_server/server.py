@@ -1273,9 +1273,22 @@ def _is_my_aliases_target(config: dict, canonical_name: str) -> bool:
 
 
 def _invalidate_config_cache() -> None:
-    """Drop the cached config so the next tool call re-reads from disk."""
-    global _config
+    """Drop the cached config so the next tool call re-reads from disk.
+
+    Also resets the cached Database and VectorStore handles — they were
+    constructed from `_config["sqlite_path"]` / `_config["chroma_path"]`,
+    and if those paths changed in the new config the live handles would
+    still point at the old files.
+    """
+    global _config, _db, _vs
+    if _db is not None:
+        try:
+            _db.close()
+        except Exception:
+            pass
     _config = None
+    _db = None
+    _vs = None
 
 
 async def _upsert_user_alias(args: dict) -> list[TextContent]:
