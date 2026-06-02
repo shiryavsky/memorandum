@@ -355,27 +355,6 @@ async def list_tools() -> list[Tool]:
             }
         ),
         Tool(
-            name="find_decisions",
-            description="Find messages that contain decisions, conclusions, or action items.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "topic": {
-                        "type": "string",
-                        "description": "Optional topic to narrow search"
-                    },
-                    "channel": {
-                        "type": "string",
-                        "description": "Optional channel filter"
-                    },
-                    "since": {
-                        "type": "string",
-                        "description": "ISO date (default: 30 days ago)"
-                    }
-                }
-            }
-        ),
-        Tool(
             name="get_stats",
             description="Get statistics about stored messages.",
             inputSchema={
@@ -668,8 +647,6 @@ async def _dispatch_tool(name: str, arguments: dict) -> list[TextContent]:
         return await _get_new_messages(arguments)
     elif name == "get_thread":
         return await _get_thread(arguments)
-    elif name == "find_decisions":
-        return await _find_decisions(arguments)
     elif name == "get_stats":
         return await _get_stats(arguments)
     elif name == "get_attached_file":
@@ -726,10 +703,8 @@ _TOOL_ARG_PROJECTORS = {
     "upsert_user_alias": lambda a: {"canonical_name": a.get("canonical_name")},
     "remove_user_alias": lambda a: {"canonical_name": a.get("canonical_name")},
     "update_user_alias_strings": lambda a: {"canonical_name": a.get("canonical_name")},
-    # Threads / decisions / digests: target id / limits, no content.
+    # Threads / digests: target id / limits, no content.
     "get_thread": lambda a: {"thread_id": a.get("thread_id"), "limit": a.get("limit")},
-    "find_decisions": lambda a: {"hours": a.get("hours"), "limit": a.get("limit"),
-                                 "topic": _truncate(a.get("topic"), 60)},
     "summarize_channel": lambda a: {"channel": a.get("channel"), "hours": a.get("hours")},
     "summarize_messages": lambda a: {"hours": a.get("hours"), "since": a.get("since")},
     "daily_digest": lambda a: {"hours": a.get("hours")},
@@ -1501,47 +1476,6 @@ async def _update_user_alias_strings(args: dict) -> list[TextContent]:
     _invalidate_config_cache()
     return [TextContent(type="text", text=json.dumps({"ok": True, "entry": result},
                                                      default=str, ensure_ascii=False))]
-
-
-async def _find_decisions(args: dict) -> list[TextContent]:
-    """Find messages that look like decisions or action items."""
-    # Construct decision-oriented query
-    topic = args.get("topic", "")
-    query = f"decision conclusion agreed action item todo {topic}"
-
-    hits = get_vs().semantic_search(
-        query=query,
-        n_results=30,
-        source=None,
-        channel=args.get("channel"),
-        since=args.get("since")
-    )
-
-    if not hits:
-        return [TextContent(type="text", text="No decisions or action items found.")]
-
-    config = get_config()
-    tz = get_display_tz(config)
-    db_rows = {r["id"]: r for r in get_db().get_by_ids([h["id"] for h in hits])}
-    results = []
-    for h in hits:
-        row = db_rows.get(h["id"])
-        if row:
-            url = make_message_url(row, config)
-            link = f" 🔗 {url}" if url else ""
-            results.append(
-                f"[{format_timestamp(row['timestamp'], tz)}] "
-                f"[{row['source']}/{row['channel']}] "
-                f"**{row['sender']}**{_ext_marker(row)}: {row['text']}{link}"
-            )
-        else:
-            results.append(
-                f"[{format_timestamp(h['metadata'].get('timestamp', ''), tz)}] "
-                f"[{h['metadata'].get('source', '')}/{h['metadata'].get('channel', '')}] "
-                f"**{h['metadata'].get('sender', '')}**: {h['text']}"
-            )
-
-    return [TextContent(type="text", text="# Decisions & Action Items\n\n" + "\n".join(results))]
 
 
 async def _get_stats(args: dict) -> list[TextContent]:

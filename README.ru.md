@@ -292,7 +292,6 @@ memorandum/
 | `summarize_messages` | Дайджест сообщений за гибкий диапазон (часы/дни)            |
 | `list_channels`      | Перечислить известные каналы (id + имя + описание) из базы  |
 | `get_new_messages`   | Подтянуть сообщения свежее DB по каналу прямо из источника (все источники) |
-| `find_decisions`     | Найти решения и action items                                |
 | `get_thread`         | Восстановить полный тред (корень + ответы) по `thread_id`   |
 | `get_stats`          | Статистика по сообщениям для каждого настроенного источника |
 | `get_attached_file`  | Содержимое файла по file_id (Telegram, Mattermost, Pachca)  |

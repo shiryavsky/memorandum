@@ -292,7 +292,6 @@ memorandum/
 | `summarize_messages` | 在灵活的时间范围（小时/天）内做消息 digest                          |
 | `list_channels`      | 列出数据库中已知的频道（id + 名称 + 描述）                          |
 | `get_new_messages`   | 直接从源（所有源）拉取比 DB 更新的频道消息                           |
-| `find_decisions`     | 查找决策与 action items                                       |
 | `get_thread`         | 按 `thread_id` 重建完整会话（根 + 回复）                           |
 | `get_stats`          | 每个已配置源的消息统计                                          |
 | `get_attached_file`  | 按 file_id 获取文件内容（Telegram、Mattermost、Pachca）            |

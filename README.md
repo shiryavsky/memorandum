@@ -292,7 +292,6 @@ memorandum/
 | `summarize_messages` | Digest of messages from a flexible time range (hours/days) |
 | `list_channels`      | List known channels (id + name + description) from the database |
 | `get_new_messages`   | Fetch messages newer than the DB for a channel, live from source (all sources) |
-| `find_decisions`     | Find decisions and action items                            |
 | `get_thread`         | Reconstruct a full thread (root + replies) by `thread_id`  |
 | `get_stats`          | Message statistics per configured source                   |
 | `get_attached_file`  | Get file content by file_id (Telegram, Mattermost, Pachca) |

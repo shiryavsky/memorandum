@@ -11,6 +11,42 @@ This document captures the WHY that doesn't fit in commit messages.
 
 ---
 
+## Removed `find_decisions` MCP tool
+
+The tool ran a semantic search against the vector store using a hardcoded
+English seed string — `"decision conclusion agreed action item todo {topic}"`
+— and returned the top-30 nearest embeddings unfiltered. In practice this
+was unreliable to the point of being misleading, and the failure modes are
+structural rather than tunable:
+
+- **Language mismatch.** Teams using the tool talk in Russian (and other
+  non-English languages); real decision phrases like «решили», «договорились»,
+  «беру на себя» live far from the English seeds in BGE-M3's vector space.
+  The model is multilingual, but cross-lingual NN retrieval against
+  contextual phrases is lossy.
+- **Marker-free decisions.** Most real decisions in chat don't contain
+  `decision:` / `action item:` style markers — they look like ordinary
+  messages ("ок, давай так"). There's no surface a vector search can latch
+  onto.
+- **No rerank, no LLM filter.** Top-30 by cosine across a 26K+ corpus is a
+  noise sample, not a curated set.
+- **Better in practice without it.** `summarize_messages` /
+  `summarize_channel` return windowed digests that the calling LLM reads
+  whole, and the LLM extracts decisions from semantic context — i.e. it
+  does the judgement the vector search couldn't. Keeping `find_decisions`
+  alongside that path just invited callers to use the worse tool.
+
+The contract was wrong, not the implementation — wrapping the same query
+in a better prompt or a multilingual seed list would still be pattern
+matching dressed up as decision detection. Removing the surface is the
+honest fix; callers compose `summarize_*` + `search_messages` themselves.
+
+- **Touchpoints:** `mcp_server/server.py` (tool schema, dispatcher arm,
+  `_args_summary_for` projector, `_find_decisions` implementation),
+  `AGENTS.md`, README in 4 languages.
+
+---
+
 ## Thread-safe `Database` (eliminates `SQLITE_MISUSE` under fan-out ingest)
 
 The `memorandum-collect` log was periodically showing `bad parameter or
