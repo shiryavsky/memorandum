@@ -31,7 +31,6 @@ Multiple named sources of the same type are fully supported. Each source has its
 - **format.py**: Canonical message renderer — `format_message`, `format_timestamp`, `make_message_url`, `get_display_tz`, `ext_marker`. Shared by `mcp_server.server` (re-exports for back-compat) and any future exporter so display style doesn't drift between surfaces.
 - **health.py**: Shared health computation (`build_health_report`) and formatting (`format_health_text`). No MCP or connector imports — used by both the CLI and the `get_health` MCP tool so they never drift.
 - **filter_engine.py**: Per-source rules — `skip_senders` (matches sender id, display name, AND email address), `skip_channels`, `only_channels`, `skip_patterns`. Email-only keys: `skip_folders` (skip whole folder by name; also matches `channel_id` of the form `folder:<name>`) and `skip_subjects` (regex against the email Subject). No global `skip_sources` (use `enabled: false` instead).
-- **scheduler.py**: Fallback scheduler for non-systemd environments. Takes `/tmp/memorandum-sync.lock` per tick (same flock as `bin/memorandum-sync` and `memorandum reindex-chroma`) so polling can't race a manually-triggered sync.
 
 ### Scheduling (systemd-based for Linux)
 - **bin/memorandum-sync**: Bash script with `flock` for exclusive execution

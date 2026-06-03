@@ -158,11 +158,7 @@ sudo systemctl enable --now memorandum-collect.timer
 ```bash
 ./bin/memorandum-sync
 ```
-或运行兜底调度器：
-```bash
-source .venv/bin/activate
-python -m pipeline.scheduler
-```
+配合 `cron` / `launchd` 即可周期化。脚本会取 `/tmp/memorandum-sync.lock`，所以并发触发也是安全的。
 
 ### 7. 注册 MCP 服务器
 
@@ -233,8 +229,7 @@ memorandum/
 │   ├── format.py            # 规范的消息渲染器（MCP 服务器与 dashboard 共用）
 │   ├── health.py            # 健康报告构建与格式化（CLI 与 MCP 共用）
 │   ├── alias_resolver.py    # 从 user_aliases 配置中做规范身份解析
-│   ├── filter_engine.py     # 基于 YAML 的按源过滤
-│   └── scheduler.py         # 兜底调度器（非 systemd 环境）
+│   └── filter_engine.py     # 基于 YAML 的按源过滤
 │
 ├── cli/                     # 面向用户的 CLI 工具（`python -m cli ...` / `bin/memorandum`）
 │   ├── __main__.py          # argparse 调度器

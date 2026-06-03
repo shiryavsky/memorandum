@@ -158,11 +158,7 @@ sudo systemctl enable --now memorandum-collect.timer
 ```bash
 ./bin/memorandum-sync
 ```
-Or run the fallback scheduler:
-```bash
-source .venv/bin/activate
-python -m pipeline.scheduler
-```
+Pair it with `cron` / `launchd` for a recurring sync. The shell wrapper takes `/tmp/memorandum-sync.lock` so overlapping runs are safe.
 
 ### 7. Register MCP Server
 
@@ -233,8 +229,7 @@ memorandum/
 │   ├── format.py            # Canonical message renderer (shared by MCP server + dashboard)
 │   ├── health.py            # Health report builder + formatter (shared by CLI and MCP)
 │   ├── alias_resolver.py    # Canonical identity resolution from user_aliases config
-│   ├── filter_engine.py     # Per-source YAML-based filtering
-│   └── scheduler.py         # Fallback scheduler (non-systemd only)
+│   └── filter_engine.py     # Per-source YAML-based filtering
 │
 ├── cli/                     # User-facing CLI utilities (`python -m cli ...` / `bin/memorandum`)
 │   ├── __main__.py          # argparse dispatcher
