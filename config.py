@@ -1,11 +1,39 @@
 """Configuration loader for Memorandum Message Collector."""
+import logging
+import os
 import yaml
 from pathlib import Path
 from typing import Optional
 
 
+logger = logging.getLogger(__name__)
+
+
+# Default location for per-source secrets, kept OUTSIDE the agent's reachable
+# filesystem (MCP filesystem clients are usually allowlisted to the project /
+# home dir; /etc is out of reach). Override per-instance via
+# `secrets_path:` in config.yaml or the MEMORANDUM_SECRETS_PATH env var.
+DEFAULT_SECRETS_PATH = "/etc/memorandum/secrets.yaml"
+
+
 def load_config(path: str = "config.yaml") -> dict:
-    """Load configuration from YAML file."""
+    """Load configuration from YAML, merging in secrets from a separate file.
+
+    The secrets file lives outside the agent-reachable filesystem (default
+    `/etc/memorandum/secrets.yaml`). Its top-level `sources:` map is shallow-
+    merged into the main config's `sources:` per source name — so the bare
+    config.yaml can hold non-sensitive structure (urls, filters, allow_send)
+    while tokens and passwords stay on a separately-permissioned path.
+
+    Resolution order for the secrets path:
+      1. `secrets_path:` key in config.yaml (explicit override)
+      2. `MEMORANDUM_SECRETS_PATH` env var
+      3. `DEFAULT_SECRETS_PATH` (= `/etc/memorandum/secrets.yaml`)
+    A missing file at the resolved path is fine — no merge happens, and
+    connectors that need a credential will fail with a clear error at
+    connect-time. That's intentional: dev / test setups can run without a
+    secrets file by configuring everything inline (still allowed).
+    """
     config_path = Path(path)
     if not config_path.exists():
         raise FileNotFoundError(
@@ -13,7 +41,56 @@ def load_config(path: str = "config.yaml") -> dict:
             f"Please create config.yaml from the template."
         )
     with open(config_path) as f:
-        return yaml.safe_load(f)
+        cfg = yaml.safe_load(f) or {}
+
+    secrets_path = (
+        cfg.get("secrets_path")
+        or os.environ.get("MEMORANDUM_SECRETS_PATH")
+        or DEFAULT_SECRETS_PATH
+    )
+    _merge_secrets(cfg, secrets_path)
+    return cfg
+
+
+def _merge_secrets(cfg: dict, secrets_path: str) -> None:
+    """Read secrets_path and shallow-merge `sources[name]` into `cfg["sources"]`.
+
+    No-op if the file doesn't exist; logs a one-liner so the operator can see
+    whether the merge fired. Source names in the secrets file that don't
+    exist in the main config are ignored (with a warning) — likely a typo and
+    silently creating a new source on every load would be surprising.
+    """
+    p = Path(secrets_path)
+    if not p.exists():
+        return
+    try:
+        with open(p) as f:
+            secrets = yaml.safe_load(f) or {}
+    except (OSError, yaml.YAMLError) as e:
+        logger.warning(f"Failed to read secrets file {secrets_path}: {e}")
+        return
+
+    sources_secrets = (secrets.get("sources") or {})
+    if not isinstance(sources_secrets, dict):
+        logger.warning(
+            f"{secrets_path}: top-level 'sources' must be a mapping; skipping merge"
+        )
+        return
+
+    cfg_sources = cfg.setdefault("sources", {})
+    merged = 0
+    for name, src_secrets in sources_secrets.items():
+        if name not in cfg_sources:
+            logger.warning(
+                f"{secrets_path}: source '{name}' not declared in main config; ignoring"
+            )
+            continue
+        if not isinstance(src_secrets, dict):
+            continue
+        cfg_sources[name].update(src_secrets)
+        merged += 1
+    if merged:
+        logger.info(f"Merged secrets for {merged} source(s) from {secrets_path}")
 
 
 def get_aliases(config: dict) -> tuple[list[dict], list[str]]:

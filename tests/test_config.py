@@ -19,6 +19,81 @@ def test_load_config_parses_valid_yaml(tmp_path):
     assert result == cfg
 
 
+# ── secrets merge ────────────────────────────────────────────────────────────
+
+def test_load_config_merges_secrets_per_source(tmp_path):
+    """`sources[name]` entries from secrets_path get shallow-merged into cfg."""
+    secrets = {"sources": {
+        "work_mm": {"token": "PAT-secret"},
+        "work_tg": {"token": "123:secret"},
+    }}
+    secrets_path = tmp_path / "secrets.yaml"
+    secrets_path.write_text(yaml.dump(secrets))
+
+    cfg = {
+        "secrets_path": str(secrets_path),
+        "sources": {
+            "work_mm": {"type": "mattermost", "url": "u", "enabled": True},
+            "work_tg": {"type": "telegram", "enabled": True},
+        },
+    }
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(yaml.dump(cfg))
+
+    result = load_config(str(cfg_path))
+    assert result["sources"]["work_mm"]["token"] == "PAT-secret"
+    assert result["sources"]["work_mm"]["url"] == "u"  # main config keys preserved
+    assert result["sources"]["work_tg"]["token"] == "123:secret"
+
+
+def test_load_config_secrets_path_via_env_var(tmp_path, monkeypatch):
+    """MEMORANDUM_SECRETS_PATH overrides the default when no secrets_path key is set."""
+    secrets_path = tmp_path / "secrets.yaml"
+    secrets_path.write_text(yaml.dump({"sources": {"s1": {"token": "from-env"}}}))
+    monkeypatch.setenv("MEMORANDUM_SECRETS_PATH", str(secrets_path))
+
+    cfg = {"sources": {"s1": {"type": "telegram"}}}
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(yaml.dump(cfg))
+
+    result = load_config(str(cfg_path))
+    assert result["sources"]["s1"]["token"] == "from-env"
+
+
+def test_load_config_missing_secrets_file_is_ok(tmp_path):
+    """Pointing at a non-existent secrets file is fine — no merge, no error."""
+    cfg = {
+        "secrets_path": str(tmp_path / "does-not-exist.yaml"),
+        "sources": {"s1": {"type": "telegram", "token": "inline"}},
+    }
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(yaml.dump(cfg))
+
+    result = load_config(str(cfg_path))
+    assert result["sources"]["s1"]["token"] == "inline"  # inline value untouched
+
+
+def test_load_config_secrets_ignored_for_unknown_source(tmp_path, caplog):
+    """A secrets entry for a source not in main config is logged + ignored.
+
+    Silently creating a source on every load would be a surprising failure mode
+    (typo in secrets.yaml) — refuse and warn instead.
+    """
+    secrets_path = tmp_path / "secrets.yaml"
+    secrets_path.write_text(yaml.dump({"sources": {"ghost": {"token": "x"}}}))
+    cfg = {
+        "secrets_path": str(secrets_path),
+        "sources": {"real": {"type": "telegram"}},
+    }
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(yaml.dump(cfg))
+
+    with caplog.at_level("WARNING"):
+        result = load_config(str(cfg_path))
+    assert "ghost" not in result["sources"]
+    assert any("ghost" in r.message for r in caplog.records)
+
+
 def test_get_sources_returns_enabled_only():
     config = {
         "sources": {
