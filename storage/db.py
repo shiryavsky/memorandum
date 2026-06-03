@@ -1248,6 +1248,18 @@ class Database:
         self.conn.close()
 
     def __enter__(self):
+        """``with Database(path) as db: ...`` — convenience that wires
+        ``close()`` into the exit path.
+
+        The Database instance returned here is owned by the entering
+        thread. The internal ``RLock`` makes individual method calls safe
+        to invoke from any thread (the ingest's ThreadPoolExecutor
+        exploits that on purpose), but the ``with`` block itself is NOT
+        a thread-safety boundary — handing ``db`` to a worker pool from
+        inside the block doesn't extend any guarantees, and exiting the
+        block closes the connection regardless of in-flight work
+        elsewhere. Treat the ``with``-binding as single-owner.
+        """
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
