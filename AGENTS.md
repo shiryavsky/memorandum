@@ -66,6 +66,8 @@ The package is split for navigability:
 
 Tools access shared state via `from mcp_server import server as _srv` then `_srv.get_db()` at call time. The runtime attribute lookup means `unittest.mock.patch("mcp_server.server.get_db")` keeps working through the indirection.
 
+**Concurrency — single tool at a time, by design.** Tool handlers are `async def` (the MCP SDK requires it) but their bodies are entirely synchronous: sqlite, Chroma + BGE-M3 encode, `requests`. None of the heavy calls go through `await` — they block the event loop for their full duration (1–2 s for a semantic search, hundreds of ms for a live HTTP fetch, microseconds for a small SQL query). The practical consequence is that the server processes one tool call at a time even if a client pipelines them. Today the workload is single-client and serial so this is invisible; if you ever see latency complaints or want to handle parallel tool use, wrap the slow calls (`vs.semantic_search`, the connectors' HTTP roundtrips) in `asyncio.to_thread(...)` — `storage.db.Database` already has the RLock to handle threaded sqlite, and Chroma reads are documented safe.
+
 Tools exposed to Claude:
 - `search_messages`: Keyword or semantic search. `source` parameter takes a source name (e.g., `company_mattermost`). Supports `mentions_me` boolean filter.
 - `summarize_channel`: Get recent messages from a channel.
