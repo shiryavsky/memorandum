@@ -44,10 +44,14 @@ class FilterEngine:
                 or (sender_email and sender_email in self.skip_senders)):
             return False
 
-        # 2. Skip by channel (check both display name and channel_id)
-        channel = msg.get("channel", "")
+        # 2. Skip by channel id. Connectors emit only `channel_id` on the
+        # message dict; the human-friendly display_name lives on the channels
+        # row, not the message, so name-based skip/only matching happens at
+        # the connector level (skip_channels passed to the constructor) — not
+        # here. Filter rules that list display names still work because each
+        # connector translates names to ids when applying its own skip list.
         channel_id = msg.get("channel_id", "")
-        if channel in self.skip_channels or channel_id in self.skip_channels:
+        if channel_id in self.skip_channels:
             return False
 
         # 2b. Skip by email folder (raw.folder or channel_id "folder:...").
@@ -61,9 +65,8 @@ class FilterEngine:
                 return False
 
         # 3. Apply only_channels allowlist (if non-empty)
-        if self.only_channels:
-            if channel not in self.only_channels and channel_id not in self.only_channels:
-                return False
+        if self.only_channels and channel_id not in self.only_channels:
+            return False
 
         # 4. Skip by regex patterns
         text = msg.get("text", "")

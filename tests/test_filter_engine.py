@@ -31,12 +31,6 @@ def test_skip_senders_by_sender_id():
     assert fe.should_keep(_msg(sender_id="u2")) is True
 
 
-def test_skip_channels_by_display_name():
-    fe = FilterEngine({"skip_channels": ["general"]})
-    assert fe.should_keep(_msg(channel="general")) is False
-    assert fe.should_keep(_msg(channel="dev")) is True
-
-
 def test_skip_channels_by_channel_id():
     fe = FilterEngine({"skip_channels": ["ch1"]})
     assert fe.should_keep(_msg(channel_id="ch1")) is False
@@ -44,18 +38,13 @@ def test_skip_channels_by_channel_id():
 
 
 def test_only_channels_rejects_unlisted():
-    fe = FilterEngine({"only_channels": ["dev"]})
-    assert fe.should_keep(_msg(channel="general", channel_id="ch1")) is False
-
-
-def test_only_channels_passes_listed_by_name():
-    fe = FilterEngine({"only_channels": ["dev"]})
-    assert fe.should_keep(_msg(channel="dev")) is True
+    fe = FilterEngine({"only_channels": ["ch_dev"]})
+    assert fe.should_keep(_msg(channel_id="ch_general")) is False
 
 
 def test_only_channels_passes_listed_by_id():
     fe = FilterEngine({"only_channels": ["ch99"]})
-    assert fe.should_keep(_msg(channel="other", channel_id="ch99")) is True
+    assert fe.should_keep(_msg(channel_id="ch99")) is True
 
 
 def test_skip_patterns_blocks_match_case_insensitive():
