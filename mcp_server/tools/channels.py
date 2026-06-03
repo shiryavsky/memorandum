@@ -7,13 +7,12 @@ the patch keeps working.
 """
 import json
 import sys
-from typing import Optional
 
 from mcp.types import TextContent
 
 from mcp_server import server as _srv
 from mcp_server.tools.digests import _short_description
-from pipeline.format import format_message, make_message_url
+from pipeline.format import format_message
 
 
 async def _list_channels(args: dict) -> list[TextContent]:
@@ -98,30 +97,6 @@ async def _get_new_messages(args: dict) -> list[TextContent]:
     return [TextContent(type="text", text=header + "\n".join(lines))]
 
 
-def _sent_message_url(source: str, stype: str, channel: str, message_id,
-                      connector, config: dict) -> Optional[str]:
-    """Best-effort permalink for a just-sent message, reusing make_message_url."""
-    if message_id in (None, ""):
-        return None
-    raw: dict = {}
-    msg: dict = {"source": source, "raw": raw}
-    if stype == "mattermost":
-        resolved = connector._resolve_channel(channel)
-        if resolved:
-            raw["team_name"] = resolved.get("team_name", "")
-            raw["post_id"] = str(message_id)
-            msg["channel_name"] = resolved.get("name", "")
-    elif stype == "telegram":
-        s = str(channel)
-        raw["chat_type"] = "supergroup" if s.startswith("-100") else "private"
-        raw["chat_id"] = s[4:] if s.startswith("-100") else s.lstrip("-")
-        raw["message_id"] = str(message_id)
-    elif stype == "pachca":
-        raw["chat_id"] = str(channel)
-        raw["message_id"] = str(message_id)
-    return make_message_url(msg, config)
-
-
 def _record_sent(source: str, channel: str, reply_to, text: str,
                  success: bool, message_id=None, error: str = None) -> None:
     """Log a send attempt (success or failure) to the sent_messages audit table."""
@@ -161,25 +136,12 @@ async def _send_message(args: dict) -> list[TextContent]:
 
     try:
         connector.connect()
-        if stype == "mattermost":
-            message_id = connector.send_message(channel, text, root_id=reply_to)
-        elif stype == "telegram":
-            row = _srv.get_db().get_channel_row(source, channel)
-            extra = row.get("extra") if row else None
-            bcid = extra.get("business_connection_id") if isinstance(extra, dict) else None
-            message_id = connector.send_message(channel, text,
-                                                reply_to=int(reply_to) if reply_to else None,
-                                                business_connection_id=bcid)
-        elif stype == "pachca":
-            message_id = connector.send_message(channel, text,
-                                                parent_message_id=int(reply_to) if reply_to else None)
-        elif stype == "email":
-            # Email = draft in Drafts folder, NOT a live send. `channel` is unused
-            # by the connector for drafts; reply_to is the parent Message-ID.
-            message_id = connector.send_message(channel, text, reply_to=reply_to)
-        else:
-            return [TextContent(type="text", text=f"Source type '{stype}' is not supported.")]
-        url = _sent_message_url(source, stype, channel, message_id, connector, config)
+        # Every connector exposes the same `send_message(channel, text, reply_to)`
+        # surface; platform-specific glue (Telegram's business_connection_id
+        # lookup, Pachca/Telegram's int-coercion of reply_to, Email's parent
+        # lookup) lives inside the connector itself.
+        message_id = connector.send_message(channel, text, reply_to=reply_to)
+        url = connector.message_url(channel, message_id)
     except Exception as e:
         _record_sent(source, channel, reply_to, text, success=False, error=str(e))
         return [TextContent(type="text", text=f"Failed to send message to '{channel}' ({source}): {e}")]

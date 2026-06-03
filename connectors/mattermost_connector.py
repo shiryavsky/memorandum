@@ -593,15 +593,16 @@ class MattermostConnector:
             "channels_skipped": channels_skipped
         }
 
-    def send_message(self, channel_id: str, text: str, root_id: str = None) -> str:
+    def send_message(self, channel_id: str, text: str, reply_to: str = None) -> str:
         """Post a message to a channel via POST /api/v4/posts. Returns the new post id.
 
-        Pass root_id to reply inside a thread. Surfaces a clear error on 429 (Mattermost
-        allows ~5 posts / 30s) instead of failing silently.
+        Pass `reply_to` (the root post id) to reply inside a thread. Surfaces a
+        clear error on 429 (Mattermost allows ~5 posts / 30s) instead of failing
+        silently.
         """
         payload = {"channel_id": channel_id, "message": text}
-        if root_id:
-            payload["root_id"] = root_id
+        if reply_to:
+            payload["root_id"] = reply_to
         try:
             post = self._post("/posts", json=payload)
         except requests.HTTPError as e:
@@ -611,6 +612,24 @@ class MattermostConnector:
                 )
             raise
         return post.get("id", "")
+
+    def message_url(self, channel: str, message_id) -> Optional[str]:
+        """Build a permalink for a just-sent message, or None if not resolvable.
+
+        Reuses `_resolve_channel` to get the team_name + URL-safe name (the
+        permalink shape is `{base}/{team_name}/channels/{name}/p/{post_id}`).
+        Returns None if the channel can't be resolved (e.g. token doesn't see it).
+        """
+        if not message_id:
+            return None
+        resolved = self._resolve_channel(channel)
+        if not resolved:
+            return None
+        team_name = resolved.get("team_name", "")
+        name = resolved.get("name", "")
+        if not (team_name and name):
+            return None
+        return f"{self.base_url}/{team_name}/channels/{name}/p/{message_id}"
 
     def get_sender_fetch_callback(self):
         """Return a callback function for caching sender info."""

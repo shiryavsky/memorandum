@@ -468,6 +468,15 @@ class EmailConnector:
         )
         return new_message_id
 
+    def message_url(self, channel, message_id) -> Optional[str]:
+        """Email drafts have no permalink — they live in the user's Drafts folder.
+
+        Returned None keeps the dispatcher's URL-collection path uniform across
+        sources; the calling layer adds a ``"draft": true`` flag and an
+        operator-facing note so the missing URL is unambiguous.
+        """
+        return None
+
     def _lookup_parent(self, message_id: str) -> Optional[dict]:
         """Find the parent message in the local DB by its Message-ID."""
         candidates = [

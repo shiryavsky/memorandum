@@ -272,17 +272,25 @@ class PachcaConnector:
                 return c
         return None
 
-    def send_message(self, chat_id, text: str, parent_message_id: int = None) -> int:
+    def send_message(self, chat_id, text: str, reply_to=None) -> int:
         """Post a message via POST /messages. Returns the new message id.
 
-        parent_message_id replies inside a thread. The chat is addressed as a discussion
-        entity (entity_type="discussion", entity_id=chat_id).
+        Pass `reply_to` (the parent message id) to reply inside a thread; it
+        is coerced to int because the Pachca API requires it. The chat is
+        addressed as a discussion entity (entity_type="discussion",
+        entity_id=chat_id).
         """
         message = {"entity_type": "discussion", "entity_id": chat_id, "content": text}
-        if parent_message_id:
-            message["parent_message_id"] = parent_message_id
+        if reply_to:
+            message["parent_message_id"] = int(reply_to)
         data = self._post("/messages", json={"message": message})
         return data.get("data", {}).get("id")
+
+    def message_url(self, channel, message_id) -> Optional[str]:
+        """Build a Pachca permalink for a just-sent message, or None."""
+        if not message_id or not channel:
+            return None
+        return f"https://app.pachca.com/chats/{channel}?message={message_id}"
 
     def fetch_new(self, channel: str, limit: int = 50) -> list[dict]:
         """Fetch messages newer than the saved sync state for one chat (oldest→newest).

@@ -328,18 +328,29 @@ class TelegramConnector:
             "extra": {},
         }
 
-    def send_message(self, chat_id, text: str, reply_to: int = None,
+    def send_message(self, chat_id, text: str, reply_to=None,
                      business_connection_id: str = None) -> int:
         """Send a message via Bot API sendMessage (POST). Returns the new message id.
 
-        reply_to threads the message under an existing one; business_connection_id is
-        required to send from a business/secretary chat (from BusinessConnection updates).
+        ``reply_to`` threads the message under an existing one (coerced to int
+        because the Bot API requires it). ``business_connection_id`` is required
+        to send from a business/secretary chat — pass it explicitly when known,
+        or leave it None and we'll look it up from the channel row via
+        ``self._db`` (the field is stored on ``channels.extra`` for business
+        chats discovered during ingest).
         """
         params: dict = {"chat_id": chat_id, "text": text}
         if reply_to:
-            params["reply_to_message_id"] = reply_to
+            params["reply_to_message_id"] = int(reply_to)
+
+        if business_connection_id is None and self._db is not None:
+            row = self._db.get_channel_row(self.source_name, str(chat_id))
+            extra = row.get("extra") if row else None
+            if isinstance(extra, dict):
+                business_connection_id = extra.get("business_connection_id")
         if business_connection_id:
             params["business_connection_id"] = business_connection_id
+
         try:
             result = self._api("sendMessage", params, http_method="POST")
         except requests.HTTPError as e:
@@ -354,6 +365,20 @@ class TelegramConnector:
                 ) from e
             raise
         return result.get("message_id")
+
+    def message_url(self, channel, message_id) -> Optional[str]:
+        """Build a t.me permalink — only valid for channels/supergroups.
+
+        Telegram private/group chats have no public link surface; we infer
+        chat type from the id prefix (``-100`` = supergroup/channel) the same
+        way the existing read-time permalink does.
+        """
+        if not message_id:
+            return None
+        s = str(channel)
+        if not s.startswith("-100"):
+            return None
+        return f"https://t.me/c/{s[4:]}/{message_id}"
 
     def fetch_new(self, channel: str, limit: int = 50) -> list[dict]:
         """Fetch new updates for one chat since the saved offset (oldest→newest).

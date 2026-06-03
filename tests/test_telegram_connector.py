@@ -592,6 +592,45 @@ def test_send_message_includes_business_connection_id():
 
 
 @rsps.activate
+def test_send_message_auto_looks_up_business_connection_id_from_db():
+    """When no explicit bcid is passed, the connector reads it off the channel row.
+
+    Lets the MCP dispatcher stay generic: every connector's send_message takes
+    just (channel, text, reply_to). Telegram-specific glue lives in the
+    connector itself.
+    """
+    rsps.add(rsps.GET, f"{API_BASE}/getMe", json=_me_response())
+    rsps.add(rsps.POST, f"{API_BASE}/sendMessage",
+             json={"ok": True, "result": {"message_id": 558}})
+
+    db = MagicMock()
+    db.get_channel_row.return_value = {"extra": {"business_connection_id": "bconn-stored"}}
+    conn = _make_connector(db=db)
+    conn.connect()
+    conn.send_message("9153987", "hi")
+
+    db.get_channel_row.assert_called_once_with("test_tg", "9153987")
+    assert "business_connection_id=bconn-stored" in rsps.calls[-1].request.body
+
+
+@rsps.activate
+def test_send_message_skips_business_connection_id_when_unknown():
+    """No row in DB -> no bcid kwarg sent. Telegram will reject if it was needed."""
+    rsps.add(rsps.GET, f"{API_BASE}/getMe", json=_me_response())
+    rsps.add(rsps.POST, f"{API_BASE}/sendMessage",
+             json={"ok": True, "result": {"message_id": 559}})
+
+    db = MagicMock()
+    db.get_channel_row.return_value = None
+    conn = _make_connector(db=db)
+    conn.connect()
+    conn.send_message("-100999", "hi")
+
+    body = rsps.calls[-1].request.body
+    assert "business_connection_id" not in body
+
+
+@rsps.activate
 def test_send_message_business_peer_invalid_gives_actionable_error():
     rsps.add(rsps.GET, f"{API_BASE}/getMe", json=_me_response())
     rsps.add(rsps.POST, f"{API_BASE}/sendMessage",
@@ -615,6 +654,25 @@ def test_send_message_surfaces_telegram_description_on_400():
     conn.connect()
     with pytest.raises(Exception, match="chat not found"):
         conn.send_message("ghostchat", "hi")
+
+
+# ── message_url ───────────────────────────────────────────────────────────────
+
+def test_message_url_supergroup_strips_minus_100():
+    conn = _make_connector()
+    assert conn.message_url("-1001234567890", 42) == "https://t.me/c/1234567890/42"
+
+
+def test_message_url_private_chat_returns_none():
+    """Telegram private chats have no public link surface."""
+    conn = _make_connector()
+    assert conn.message_url("9153987", 42) is None
+
+
+def test_message_url_no_message_id_returns_none():
+    conn = _make_connector()
+    assert conn.message_url("-1001234567890", None) is None
+    assert conn.message_url("-1001234567890", "") is None
 
 
 # ── chat description (getChat) ────────────────────────────────────────────────

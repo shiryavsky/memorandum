@@ -504,11 +504,26 @@ def test_send_message_posts_and_returns_id():
 
 @rsps.activate
 def test_send_message_includes_parent_message_id():
+    """`reply_to` is the public kwarg; on the wire it lands as `parent_message_id`."""
     rsps.add(rsps.GET, f"{BASE}/profile", json=_me_resp())
     rsps.add(rsps.POST, f"{BASE}/messages", json={"data": {"id": 9002}}, status=201)
 
     conn = _make_connector()
     conn.connect()
-    conn.send_message(10, "in thread", parent_message_id=8000)
+    # Accepts an int or a coerce-able string; the connector emits int.
+    conn.send_message(10, "in thread", reply_to="8000")
 
-    assert b"8000" in rsps.calls[-1].request.body
+    body = rsps.calls[-1].request.body
+    assert b"parent_message_id" in body
+    assert b"8000" in body
+
+
+def test_message_url_builds_pachca_permalink():
+    conn = _make_connector()
+    assert conn.message_url(55, 9001) == "https://app.pachca.com/chats/55?message=9001"
+
+
+def test_message_url_missing_message_id_returns_none():
+    conn = _make_connector()
+    assert conn.message_url(55, None) is None
+    assert conn.message_url(55, "") is None

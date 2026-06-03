@@ -399,6 +399,7 @@ def test_send_message_dispatches_pachca_and_returns_result(mock_cfg, mock_build,
                                                 "allow_send": True}}}
     connector = MagicMock()
     connector.send_message.return_value = 9001
+    connector.message_url.return_value = "https://app.pachca.com/chats/55?message=9001"
     mock_build.return_value = connector
     mock_get_db.return_value = MagicMock()
 
@@ -408,7 +409,10 @@ def test_send_message_dispatches_pachca_and_returns_result(mock_cfg, mock_build,
     assert result["success"] is True
     assert result["message_id"] == 9001
     assert result["url"] == "https://app.pachca.com/chats/55?message=9001"
-    connector.send_message.assert_called_once_with("55", "hi", parent_message_id=None)
+    # Unified surface: every connector takes `reply_to`; platform glue (int
+    # coercion, business_connection_id, etc.) lives inside the connector.
+    connector.send_message.assert_called_once_with("55", "hi", reply_to=None)
+    connector.message_url.assert_called_once_with("55", 9001)
 
 
 @patch("mcp_server.server.get_db")
@@ -419,51 +423,13 @@ def test_send_message_passes_reply_to(mock_cfg, mock_build, mock_get_db):
                                                 "token": "t", "allow_send": True}}}
     connector = MagicMock()
     connector.send_message.return_value = "post1"
-    connector._resolve_channel.return_value = None
+    connector.message_url.return_value = None
     mock_build.return_value = connector
     mock_get_db.return_value = MagicMock()
 
     asyncio.run(_send_message({"source": "mm", "channel": "ch1", "text": "hi",
                                "reply_to": "root9"}))
-    connector.send_message.assert_called_once_with("ch1", "hi", root_id="root9")
-
-
-@patch("mcp_server.server.get_db")
-@patch("mcp_server.server._build_live_connector")
-@patch("mcp_server.server.get_config")
-def test_send_message_telegram_uses_stored_business_connection_id(mock_cfg, mock_build, mock_get_db):
-    mock_cfg.return_value = {"sources": {"tg": {"type": "telegram", "token": "t",
-                                                "allow_send": True}}}
-    connector = MagicMock()
-    connector.send_message.return_value = 777
-    mock_build.return_value = connector
-    db = MagicMock()
-    db.get_channel_row.return_value = {"extra": {"business_connection_id": "bconn-xyz"}}
-    mock_get_db.return_value = db
-
-    asyncio.run(_send_message({"source": "tg", "channel": "9153987", "text": "hi"}))
-
-    connector.send_message.assert_called_once_with(
-        "9153987", "hi", reply_to=None, business_connection_id="bconn-xyz")
-
-
-@patch("mcp_server.server.get_db")
-@patch("mcp_server.server._build_live_connector")
-@patch("mcp_server.server.get_config")
-def test_send_message_telegram_no_business_id_passes_none(mock_cfg, mock_build, mock_get_db):
-    mock_cfg.return_value = {"sources": {"tg": {"type": "telegram", "token": "t",
-                                                "allow_send": True}}}
-    connector = MagicMock()
-    connector.send_message.return_value = 778
-    mock_build.return_value = connector
-    db = MagicMock()
-    db.get_channel_row.return_value = None  # channel not in DB
-    mock_get_db.return_value = db
-
-    asyncio.run(_send_message({"source": "tg", "channel": "-100999", "text": "hi"}))
-
-    connector.send_message.assert_called_once_with(
-        "-100999", "hi", reply_to=None, business_connection_id=None)
+    connector.send_message.assert_called_once_with("ch1", "hi", reply_to="root9")
 
 
 @patch("mcp_server.server.get_db")
@@ -474,6 +440,7 @@ def test_send_message_logs_success_to_db(mock_cfg, mock_build, mock_get_db):
                                                 "allow_send": True}}}
     connector = MagicMock()
     connector.send_message.return_value = 9001
+    connector.message_url.return_value = None
     mock_build.return_value = connector
     db = MagicMock()
     mock_get_db.return_value = db
@@ -1031,6 +998,7 @@ def test_send_message_email_dispatch_returns_draft_marker(mock_cfg, mock_build, 
     mock_cfg.return_value = _email_config()
     fake_conn = MagicMock()
     fake_conn.send_message.return_value = "<new-id@example.com>"
+    fake_conn.message_url.return_value = None
     mock_build.return_value = fake_conn
     mock_get_db.return_value = MagicMock()
 

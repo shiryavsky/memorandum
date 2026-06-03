@@ -16,7 +16,6 @@ from .channels import (
     _list_channels,
     _record_sent,
     _send_message,
-    _sent_message_url,
 )
 from .digests import (
     _build_channel_desc_lookup,

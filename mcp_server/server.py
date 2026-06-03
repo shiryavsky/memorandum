@@ -143,21 +143,22 @@ def _invalidate_config_cache() -> None:
 
 
 def _build_live_connector(source: str, src_cfg: dict, text_extensions: set):
-    """Build a read-only connector (db=None) for a live fetch, or None if unsupported.
+    """Build a connector for a live-fetch / send tool, or None if unsupported.
 
-    Email is the one exception: drafts need a writable handle to look up
-    parent messages for In-Reply-To headers, so it gets the real DB.
+    Passes the live DB handle through. Connectors guard their own writes
+    during read-only paths (`fetch_new` etc.); the handle is here so
+    send-time lookups can resolve their own platform glue without leaking
+    into the dispatcher (Telegram's business_connection_id, Email's parent
+    message lookup).
 
     Kept on this module (not in ``tools/channels.py``) because existing
     tests patch it at ``mcp_server.server._build_live_connector``.
     """
-    source_type = src_cfg.get("type")
-    db_for_connector = get_db() if source_type == "email" else None
     return build_connector(
-        source_type=source_type,
+        source_type=src_cfg.get("type"),
         source_name=source,
         src_cfg=src_cfg,
-        db=db_for_connector,
+        db=get_db(),
         db_callback=get_db().get_channel,
         text_extensions=text_extensions,
         youtrack_cfg=get_config().get("youtrack") or {},

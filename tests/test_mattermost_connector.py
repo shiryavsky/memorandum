@@ -297,14 +297,17 @@ def test_send_message_posts_and_returns_id():
 
 @rsps.activate
 def test_send_message_includes_root_id_for_reply():
+    """`reply_to` is the public kwarg; on the wire it lands as Mattermost's `root_id`."""
     _register_me()
     rsps.add(rsps.POST, f"{API}/posts", json={"id": "reply1"}, status=201)
 
     conn = _make_connector()
     conn.connect()
-    conn.send_message("ch1", "in thread", root_id="root99")
+    conn.send_message("ch1", "in thread", reply_to="root99")
 
-    assert b"root99" in rsps.calls[-1].request.body
+    body = rsps.calls[-1].request.body
+    assert b"root_id" in body
+    assert b"root99" in body
 
 
 @rsps.activate
@@ -316,6 +319,33 @@ def test_send_message_raises_clear_error_on_429():
     conn.connect()
     with pytest.raises(RuntimeError, match="rate limit"):
         conn.send_message("ch1", "too fast")
+
+
+# ── message_url ───────────────────────────────────────────────────────────────
+
+@rsps.activate
+def test_message_url_uses_resolved_channel():
+    """Builds {base}/{team_name}/channels/{name}/p/{post_id} after _resolve_channel."""
+    _register_me()
+    _register_teams()
+    _register_channels(channels=[{
+        "id": "ch1", "name": "dev", "display_name": "Dev", "type": "O",
+    }])
+
+    conn = _make_connector()
+    conn.connect()
+    assert conn.message_url("ch1", "post42") == f"{BASE}/myteam/channels/dev/p/post42"
+
+
+@rsps.activate
+def test_message_url_returns_none_when_channel_unresolved():
+    _register_me()
+    _register_teams()
+    _register_channels(channels=[])
+
+    conn = _make_connector()
+    conn.connect()
+    assert conn.message_url("ch_missing", "post42") is None
 
 
 # ── channel description (purpose + header) ────────────────────────────────────
