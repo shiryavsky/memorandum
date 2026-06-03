@@ -205,7 +205,7 @@ def test_does_not_touch_channels_or_senders(db, vs, cache_dir):
     assert db.get_sender("src", "u1") is not None
 
 
-# ── ingest-end hook (TASK-028 wiring inside pipeline.ingest) ─────────────────
+# ── ingest-end hook (wiring inside pipeline.ingest) ─────────────────
 
 def test_ingest_end_hook_catches_housekeeping_exception(tmp_path):
     """If housekeeping blows up, the ingest must still return its stats cleanly."""
@@ -291,7 +291,7 @@ def test_ingest_end_hook_skips_housekeeping_when_retention_block_absent(tmp_path
         assert stats["sources_checked"] == 1
 
 
-# ── orphan-vs-retention split (TASK-028 follow-up) ──────────────────────────
+# ── orphan-vs-retention split (follow-up) ──────────────────────────
 
 def test_split_pure_orphan_vs_retention_driven_sweep(db, vs, cache_dir):
     """The sweep should distinguish files orphaned by a previous filter/dupe
@@ -343,7 +343,7 @@ def test_dry_run_split_treats_everything_as_orphan(db, vs, cache_dir):
     assert r2["files_with_deleted_messages"] == 0
 
 
-# ── grace period (TASK-028 follow-up) ───────────────────────────────────────
+# ── grace period (follow-up) ───────────────────────────────────────
 
 def test_grace_period_skips_recently_written_files(db, vs, cache_dir):
     """A file written < grace ago must NOT be swept even when unreferenced."""

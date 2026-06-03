@@ -1,10 +1,10 @@
 """Shared `user_aliases` YAML writer surface.
 
 Used by both:
-  * ``memorandum aliases refresh --in-place`` (TASK-024) — appends stubs for
-    senders the operator hasn't curated yet.
+  * ``memorandum aliases refresh --in-place`` — appends stubs for senders the
+    operator hasn't curated yet.
   * The three MCP write tools (``upsert_user_alias``, ``remove_user_alias``,
-    ``update_user_alias_strings``) — TASK-029.
+    ``update_user_alias_strings``).
 
 The whole point of this module is that there's exactly ONE path that mutates
 ``config.yaml``. Both callers go through ``load_aliases_yaml`` → mutate via the
@@ -15,8 +15,7 @@ The ``apply_*`` helpers raise ``ValueError`` on bad input (missing canonical,
 last-alias removal, cross-canonical alias theft) so the calling layer can
 translate to its own error surface (CLI exit code / MCP tool text).
 
-Schema is fixed at the TASK-023 field set:
-``canonical_name``, ``aliases``, ``internal``, ``role``, ``team``,
+Schema: ``canonical_name``, ``aliases``, ``internal``, ``role``, ``team``,
 ``reports_to``, ``responsible_for``.
 """
 from typing import Optional, Tuple

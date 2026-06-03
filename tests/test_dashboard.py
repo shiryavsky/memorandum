@@ -1,4 +1,4 @@
-"""Tests for pipeline/dashboard.py — the dashboard data layer (TASK-026)."""
+"""Tests for pipeline/dashboard.py — the dashboard data layer."""
 from cli.dashboard import _hour_label_row
 from cli.dashboard import _multi_row_bars
 from datetime import datetime, timezone, timedelta
@@ -268,7 +268,7 @@ def test_human_age_minutes():
     assert "m ago" in data._human_age(now - timedelta(minutes=5), now=now)
 
 
-# ── _multi_row_bars (TASK-026 follow-up: taller histograms) ──────────────────
+# ── _multi_row_bars (follow-up: taller histograms) ──────────────────
 
 def test_multi_row_bars_empty_values_returns_blank_rows():
     rows = _multi_row_bars([], peak=10, height=5)

@@ -1,4 +1,4 @@
-"""Tests for pipeline.ingest parallel-fetch helpers (TASK-027).
+"""Tests for pipeline.ingest parallel-fetch helpers.
 
 Covers the small pure helpers (_resolve_worker_count, _fetch_one, _fetch_all)
 in isolation. End-to-end coverage of the run_ingest integration lives in

@@ -168,7 +168,7 @@ class Database:
         from a read-only consumer (the dashboard) raise instead of corrupting
         the file. We still ensure SCHEMA is current via a brief writable open
         beforehand — older DBs predating a column / table addition (e.g. the
-        `tool_calls` table from TASK-026) wouldn't otherwise have it, and the
+        `tool_calls` table added in a later schema migration) wouldn't otherwise have it, and the
         read-only consumer can't add it.
         """
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -809,7 +809,7 @@ class Database:
         """).fetchall()
         return [dict(r) for r in rows]
 
-    # === Retention / pruning (TASK-028) ===
+    # === Retention / pruning ===
     #
     # The whole-row contract: ``prune(cutoff_iso)`` deletes everything WHERE
     # timestamp < cutoff_iso from messages + their mentions + sent_messages +
@@ -988,7 +988,7 @@ class Database:
             ).fetchall()
         return [r["name"] for r in rows]
 
-    # === Tool calls log (TASK-026) ===
+    # === Tool calls log ===
 
     # Amortized prune cadence — every Nth log_tool_call attempts to drop rows
     # older than 30 days. Keeps the table bounded without adding a write per
@@ -1050,7 +1050,7 @@ class Database:
             print(f"_prune_tool_calls failed: {e}", file=_sys.stderr)
             return 0
 
-    # === Dashboard read queries (TASK-026) ===
+    # === Dashboard read queries ===
     # All SQL lives here so pipeline/dashboard.py stays pure formatting.
 
     @_synchronized

@@ -1,4 +1,4 @@
-"""``memorandum dashboard`` — live terminal dashboard (TASK-026).
+"""``memorandum dashboard`` — live terminal dashboard.
 
 Reads everything from the local SQLite + Chroma + config; writes nothing.
 The data layer lives in ``pipeline.dashboard`` (pure formatting, no rich

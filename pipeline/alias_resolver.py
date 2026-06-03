@@ -1,6 +1,6 @@
 """Alias resolution for sender names and current-user mention detection."""
 
-# Optional per-user metadata fields surfaced via `get_meta()` (TASK-023).
+# Optional per-user metadata fields surfaced via `get_meta()`.
 # Free-form text; the resolver doesn't validate or normalize them.
 _META_FIELDS = ("role", "team", "reports_to", "responsible_for")
 

@@ -27,7 +27,7 @@ def test_main_aliases_requires_action():
         main(["aliases"])
 
 
-# ── prune (TASK-028) ─────────────────────────────────────────────────────────
+# ── prune ─────────────────────────────────────────────────────────
 
 def test_main_routes_prune_dry_run_by_default():
     with patch("cli.prune.run") as run:
@@ -55,7 +55,7 @@ def test_main_prune_dry_run_and_commit_are_mutually_exclusive():
         main(["prune", "--dry-run", "--commit"])
 
 
-# ── dashboard (TASK-026) ─────────────────────────────────────────────────────
+# ── dashboard ─────────────────────────────────────────────────────
 
 def test_main_routes_dashboard_defaults():
     with patch("cli.dashboard.run") as run:

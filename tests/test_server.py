@@ -1007,7 +1007,7 @@ def test_who_mentioned_passes_source_since_until_limit(mock_get_db, mock_cfg):
     assert call_kwargs["limit"] == 10
 
 
-# ── email source dispatch (TASK-012) ─────────────────────────────────────────
+# ── email source dispatch ─────────────────────────────────────────
 
 def _email_config():
     return {"sources": {"em": {
@@ -1061,7 +1061,7 @@ def test_send_message_email_refuses_without_allow_send(mock_cfg, mock_build):
     mock_build.assert_not_called()
 
 
-# ── user_aliases write tools (TASK-029) ──────────────────────────────────────
+# ── user_aliases write tools ──────────────────────────────────────
 
 
 _ALIAS_SEED_YAML = """\
@@ -1263,7 +1263,7 @@ def test_update_user_alias_strings_enforces_cap(tmp_path):
     assert "max_aliases_per_entry" in out[0].text
 
 
-# ── args_summary redaction (TASK-026) ────────────────────────────────────────
+# ── args_summary redaction ────────────────────────────────────────
 
 def test_args_summary_send_message_omits_text():
     s = _args_summary_for("send_message", {
@@ -1312,7 +1312,7 @@ def test_args_summary_unknown_tool_falls_back_to_verbatim():
     assert payload == {"foo": "bar"}
 
 
-# ── call_tool wrapper logs to tool_calls (TASK-026) ──────────────────────────
+# ── call_tool wrapper logs to tool_calls ──────────────────────────
 
 async def _fake_ok(name, args):
     return [_TC(type="text", text="ok")]

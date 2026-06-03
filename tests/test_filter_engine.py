@@ -66,7 +66,7 @@ def test_filter_messages_returns_kept_only():
     assert all(m["sender"] != "bot" for m in kept)
 
 
-# ── Email-specific filters (TASK-012) ────────────────────────────────────────
+# ── Email-specific filters ────────────────────────────────────────
 
 def test_skip_folders_via_raw_folder_drops_message():
     fe = FilterEngine({"skip_folders": ["Spam"]})

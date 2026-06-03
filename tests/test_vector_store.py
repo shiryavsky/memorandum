@@ -222,7 +222,7 @@ def test_check_dim_numpy_array_mismatch_still_raises(tmp_path):
         store.insert({"id": "m1", "text": "hi"})
 
 
-# ── delete_many (TASK-028 bulk variant) ──────────────────────────────────────
+# ── delete_many (bulk variant) ──────────────────────────────────────
 
 def test_delete_many_empty_returns_zero(tmp_path):
     store, _, col, _, _ = _make(tmp_path)

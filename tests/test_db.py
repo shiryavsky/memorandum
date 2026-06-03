@@ -543,7 +543,7 @@ def test_identity_empty_filters_return_empty(db):
     assert db.get_mentions_for_identity() == []
 
 
-# ── retention / prune (TASK-028) ─────────────────────────────────────────────
+# ── retention / prune ─────────────────────────────────────────────
 
 def test_referenced_file_ids_picks_up_all_four_marker_shapes(db):
     # Pachca/Email sha1-prefix (24 hex)
@@ -651,7 +651,7 @@ def test_last_prune_at_ignores_failed_runs(db):
     assert db.last_prune_at() is None
 
 
-# ── tool_calls log (TASK-026) ────────────────────────────────────────────────
+# ── tool_calls log ────────────────────────────────────────────────
 
 def test_log_tool_call_round_trip(db):
     db.log_tool_call(tool_name="search_messages",
@@ -733,7 +733,7 @@ def test_read_only_mode_refuses_writes(tmp_path):
     ro.close()
 
 
-# ── dashboard read queries (TASK-026) ────────────────────────────────────────
+# ── dashboard read queries ────────────────────────────────────────
 
 def test_latest_messages_orders_newest_first(db):
     db.insert(_msg(id="src:old", timestamp="2024-01-01T00:00:00+00:00"))

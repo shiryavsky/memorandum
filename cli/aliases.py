@@ -100,7 +100,7 @@ def _format_seen(entry: dict) -> str:
 # ── output formats ────────────────────────────────────────────────────────────
 
 def _stub_yaml(candidates: list) -> str:
-    """Append-ready YAML block for stdout. Hints for TASK-023 fields kept commented."""
+    """Append-ready YAML block for stdout. Hints for role/team/reports_to fields kept commented."""
     if not candidates:
         return "# No new senders to add — every sender in the DB is already covered.\n"
     lines = [
@@ -140,8 +140,8 @@ def _append_in_place(config_path: str, candidates: list) -> int:
     """Append stub entries to ``config.yaml``'s ``user_aliases:`` list.
 
     Routes through ``cli.alias_writer`` (the shared YAML surface — same one the
-    MCP write tools use), so the TASK-024 append path and the TASK-029 MCP path
-    can't drift. The append-only contract is preserved: existing entries with
+    MCP write tools use), so the CLI append path and the MCP write path can't
+    drift. The append-only contract is preserved: existing entries with
     the same canonical_name are merged into (effectively no-op for these stubs
     that only carry canonical_name + aliases identical to what's already there).
     Returns the number of candidates processed.

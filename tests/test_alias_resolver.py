@@ -125,7 +125,7 @@ def test_is_internal_false_for_unknown_sender():
     assert r.is_internal("stranger") is False
 
 
-# ── is_internal() — layered precedence (TASK-025) ─────────────────────────────
+# ── is_internal() — layered precedence ─────────────────────────────
 
 def test_is_internal_source_flag_is_lowest_layer():
     r = _resolver(user_aliases=[])
@@ -182,7 +182,7 @@ def test_is_internal_my_aliases_always_internal_overriding_everything():
 
 
 def test_is_internal_alias_absent_is_not_an_opinion():
-    """Pre-TASK-025 behavior: an alias group with no `internal` key falls through to domain/source."""
+    """Earlier behavior: an alias group with no `internal` key falls through to domain/source."""
     aliases = [{"canonical_name": "Bob Wilson", "aliases": ["bob"]}]  # no internal key
     r = _resolver(user_aliases=aliases, internal_domains=["mycompany.com"])
     # Falls through: no email, no source flag → False.
@@ -240,7 +240,7 @@ def test_alias_groups_empty_when_no_user_aliases():
     assert r.alias_groups() == []
 
 
-# ── get_meta (TASK-023) ───────────────────────────────────────────────────────
+# ── get_meta ───────────────────────────────────────────────────────
 
 def test_get_meta_returns_role_team_reports_to_responsible_for():
     r = AliasResolver([

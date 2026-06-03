@@ -462,7 +462,7 @@ def test_get_sender_info_falls_back_to_local_part_when_unseen():
     assert info["full_name"] == "alice"
 
 
-# ── _fetch_folder respects `since` (TASK-012 follow-up fix) ──────────────────
+# ── _fetch_folder respects `since` (follow-up fix) ──────────────────
 
 def test_fetch_folder_first_run_with_since_uses_imap_since_predicate(monkeypatch):
     """No saved state + `since` provided → IMAP `SINCE` filter, no limit cap."""

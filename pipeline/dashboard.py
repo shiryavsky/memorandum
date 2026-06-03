@@ -1,4 +1,4 @@
-"""Dashboard data layer (TASK-026).
+"""Dashboard data layer.
 
 Pure data-fetch + format. ZERO ``rich`` / terminal imports — so the same
 functions can drive the TUI today and (if we ever want it) a ``dashboard_json``

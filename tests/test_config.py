@@ -88,7 +88,7 @@ def test_get_internal_domains_drops_empty_and_none_entries():
     assert get_internal_domains(cfg) == ["mycompany.com", "other.org"]
 
 
-# ── get_ingest_settings (TASK-027) ────────────────────────────────────────────
+# ── get_ingest_settings ────────────────────────────────────────────
 
 def test_get_ingest_settings_defaults():
     s = get_ingest_settings({})
@@ -130,7 +130,7 @@ def test_get_ingest_settings_garbage_max_workers_falls_back():
     assert s["max_fetch_workers"] == 8
 
 
-# ── get_alias_edit_settings (TASK-029) ────────────────────────────────────────
+# ── get_alias_edit_settings ────────────────────────────────────────
 
 def test_get_alias_edit_settings_defaults():
     s = get_alias_edit_settings({})
@@ -164,7 +164,7 @@ def test_get_alias_edit_settings_negative_cap_clamped_to_one():
     assert s["max_aliases_per_entry"] == 1
 
 
-# ── get_retention_settings (TASK-028) ─────────────────────────────────────────
+# ── get_retention_settings ─────────────────────────────────────────
 
 def test_get_retention_settings_block_absent_means_disabled():
     """Operator hasn't opted in → housekeeping does nothing on a fresh install."""

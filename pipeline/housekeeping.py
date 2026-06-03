@@ -1,4 +1,4 @@
-"""Retention / housekeeping (TASK-028).
+"""Retention / housekeeping.
 
 Orchestrates the cross-store fan-out for "delete everything older than the
 configured horizon" — one SQLite transaction for the relational rows, plus a

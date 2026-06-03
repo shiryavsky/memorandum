@@ -436,7 +436,7 @@ def test_run_ingest_message_with_no_mentions_writes_no_rows(MockMM, MockVS, tmp_
     assert db.get_mentions() == []
 
 
-# ── internal_domains rule (TASK-025) ─────────────────────────────────────────
+# ── internal_domains rule ─────────────────────────────────────────
 
 @patch("pipeline.ingest.VectorStore")
 @patch("connectors.factory.MattermostConnector")
@@ -557,7 +557,7 @@ def test_run_ingest_alias_false_demotes_internal_domain_sender(MockMM, MockVS, t
     assert db.search()[0]["internal"] == 0
 
 
-# ── parallel fetch (TASK-027) ────────────────────────────────────────────────
+# ── parallel fetch ────────────────────────────────────────────────
 
 @patch("pipeline.ingest.VectorStore")
 @patch("connectors.factory.PachcaConnector")
