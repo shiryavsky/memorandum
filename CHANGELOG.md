@@ -11,6 +11,68 @@ This document captures the WHY that doesn't fit in commit messages.
 
 ---
 
+## Connectors: unified send-side surface + structural protocol
+
+Two related changes that together let the MCP dispatcher stop knowing
+which source it's talking to.
+
+**Unified `send_message` + `message_url`.** Before R10, each connector
+had its own reply-target kwarg — Mattermost's `root_id`, Telegram's
+`reply_to`, Pachca's `parent_message_id`, email's `reply_to` — and the
+dispatcher in `tools/channels.py` had a four-arm switch to bridge the
+generic ``args["reply_to"]`` to each platform's name. URL building lived
+in a `_sent_message_url` helper that knew the permalink shape of three
+sources by hand. Both got pulled into the connectors:
+
+- `send_message(channel, text, reply_to=None)` — every connector takes
+  the same kwarg. Each renames + coerces internally (Mattermost
+  emits `root_id` on the wire; Telegram and Pachca cast the value
+  to `int`).
+- `message_url(channel, message_id) -> str | None` — every connector
+  builds its own permalink (or returns `None` for Telegram private
+  chats / email drafts / unresolved Mattermost channels).
+- `_build_live_connector` now passes the live DB handle to every
+  connector (was `db=None` for non-email before). The MCP server is
+  no longer special-casing the email path; connectors guard their
+  own writes during read-only flows the way they always did.
+- Platform-specific glue moved into the connector that owns it:
+  Telegram's `business_connection_id` lookup off the channel row now
+  happens inside `TelegramConnector.send_message` itself when no
+  bcid is passed explicitly.
+
+The dispatcher collapses to:
+
+```python
+message_id = connector.send_message(channel, text, reply_to=reply_to)
+url = connector.message_url(channel, message_id)
+```
+
+**Structural protocol (`ConnectorProtocol`).** A PEP-544
+`@runtime_checkable` Protocol in `connectors/_common.py` documents the
+surface every source implements — `connect` / `disconnect` /
+`fetch_messages` / `fetch_new` / `send_message` / `message_url` /
+`get_sender_info`. No inheritance; the four shipped connectors satisfy
+it by shape. `factory.build_connector` now declares
+`-> Optional[ConnectorProtocol]` as its return type. A new
+`tests/test_connector_protocol.py` parametrizes over the four classes
+and asserts `isinstance(instance, ConnectorProtocol)` — catches a
+missing or renamed method before it lands.
+
+**On the contract details.** ``fetch_new`` is allowed to raise
+`NotImplementedError` (Email does — IMAP polling is too heavy for an
+interactive tool call). The MCP `get_new_messages` handler catches that
+and punts; an empty list is reserved for "no new messages." This stays
+explicit instead of being collapsed to `None` — callers already
+special-case the raise.
+
+Touchpoints: all four connectors, `connectors/_common.py`,
+`connectors/factory.py`, `connectors/__init__.py`,
+`mcp_server/server.py::_build_live_connector`,
+`mcp_server/tools/channels.py`, plus connector-level test updates and
+the new protocol contract test. 635 tests pass.
+
+---
+
 ## MCP server split: `schemas.py`, `projectors.py`, `tools/`
 
 `mcp_server/server.py` had grown to 1717 lines — `Server` setup, 16
