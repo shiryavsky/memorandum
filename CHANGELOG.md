@@ -11,6 +11,66 @@ This document captures the WHY that doesn't fit in commit messages.
 
 ---
 
+## Credentials move out of `config.yaml` into `/etc/memorandum/secrets.yaml`
+
+**Breaking change.** Per-source tokens / passwords are no longer kept
+inline in `config.yaml`. They live in a separate YAML file, default
+`/etc/memorandum/secrets.yaml` (`chmod 600`), and are shallow-merged
+into `config["sources"][name]` at load time. Override the path via
+`secrets_path:` in `config.yaml` or `MEMORANDUM_SECRETS_PATH`.
+
+- **Why.** The MCP server runs as the user and can read anywhere
+  the user can; the **agent side** (Claude Desktop / Claude Code /
+  any filesystem-capable MCP server the user has wired in) is
+  typically allowlisted to the project / home directory by its own
+  sandbox. Putting credentials under `/etc/` puts them physically
+  outside that allowlist — a misbehaving or future filesystem tool
+  can't grep them, and the agent's own path-traversal can't escape
+  its sandbox. This is a harness boundary, not a UNIX-permissions
+  one, but it's the boundary the agent actually respects.
+- **Why no backward-compat for inline tokens.** Keeping the inline
+  path "for a release or two" mostly invites the operator to never
+  migrate. A hard break with a clear connect-time error and a
+  short README migration recipe is friendlier than a soft warning
+  no one reads.
+
+**Migration (one-time):**
+
+```bash
+sudo mkdir -p /etc/memorandum
+sudo install -m 600 -o $USER secrets.example.yaml /etc/memorandum/secrets.yaml
+sudo $EDITOR /etc/memorandum/secrets.yaml   # paste your tokens
+# then strip `token:` / `password:` lines from config.yaml
+```
+
+A missing secrets file is fine — connectors that need a credential
+fail at connect-time with the existing clear error. Unknown source
+names in the secrets file are logged + ignored (typo defense, rather
+than silently creating a phantom source on every load).
+
+- **Loader shape.** `config.load_config` reads `config.yaml`,
+  resolves `secrets_path` (config key → env var → default), reads
+  the secrets file if present, and merges `sources[name]` entries
+  into the main config. Everything else (filters, urls, retention,
+  user_aliases) keeps its existing shape.
+- **What stayed in `config.yaml`.** Source structure (`type`,
+  `url`, `host`, `port`, `username`, `enabled`, `allow_send`,
+  `internal`, `filters`), plus the unrelated config (display
+  timezone, retention, ingest concurrency, YouTrack, aliases).
+- **What's in `secrets.yaml`.** Just `token:` per chat source and
+  `password:` per email source. Top-level shape mirrors
+  `sources[name]`. A new `secrets.example.yaml` ships in the repo
+  (no real credentials).
+
+Touchpoints: `config.py` (loader + merge), `config.example.yaml`
+(inline tokens removed, secrets pointer added), `secrets.example.yaml`
+(new), READMEs in 4 languages (setup recipe + "Why a separate secrets
+file" section), `AGENTS.md` (Configuration section). 639 tests pass;
+four new tests cover the merge / env-var / missing-file / unknown-
+source paths.
+
+---
+
 ## Connectors: unified send-side surface + structural protocol
 
 Two related changes that together let the MCP dispatcher stop knowing

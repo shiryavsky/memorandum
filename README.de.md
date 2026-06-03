@@ -72,7 +72,20 @@ Standardmäßig wird ein mehrsprachiges Embedding-Modell installiert — funktio
 
 ### 3. Konfigurieren
 
-Bearbeite `config.yaml` (in Schritt 2 aus `config.example.yaml` erstellt) und füge deine Quellen hinzu:
+Die Konfiguration liegt in zwei Dateien:
+
+- **`config.yaml`** (im Projektverzeichnis, gitignored) — Struktur, Filter, Aliases, Retention.
+- **`/etc/memorandum/secrets.yaml`** (`chmod 600`) — Tokens / Passwörter pro Quelle. Außerhalb des Projektbaums, damit ein Filesystem-fähiger Agent mit Sandbox in `~/` (Claude Desktop / Claude Code / beliebiger Filesystem-MCP) sie nicht lesen kann. Siehe [Warum eine separate secrets-Datei](#warum-eine-separate-secrets-datei) unten.
+
+**Einmal-Setup der secrets-Datei:**
+
+```bash
+sudo mkdir -p /etc/memorandum
+sudo install -m 600 -o "$USER" secrets.example.yaml /etc/memorandum/secrets.yaml
+sudo "$EDITOR" /etc/memorandum/secrets.yaml
+```
+
+Dann `config.yaml` bearbeiten (in Schritt 2 aus `config.example.yaml` erstellt) und Quellen hinzufügen:
 
 ```yaml
 sources:
@@ -80,7 +93,7 @@ sources:
     type: mattermost
     enabled: true
     url: "https://mattermost.yourcompany.com"
-    token: "your-personal-access-token"   # Account Settings → Security
+    # token kommt aus /etc/memorandum/secrets.yaml
     internal: true                        # Absender hier gelten als interne Mitarbeiter (externe bekommen ein [external]-Tag)
     allow_send: false                     # Standard; auf true setzen, damit send_message hier posten darf
     filters:
@@ -93,12 +106,12 @@ sources:
   work_telegram:
     type: telegram
     enabled: true
-    token: "123456:AABBcc..."   # von @BotFather
+    # token kommt aus secrets.yaml — Bot von @BotFather
 
   work_pachca:
     type: pachca
     enabled: true
-    token: "your-personal-access-token"   # Automations → API in den Pachca-Einstellungen
+    # token kommt aus secrets.yaml — Automations → API in den Pachca-Einstellungen
     filters:
       skip_channels: ["random"]
 
@@ -125,6 +138,24 @@ user_aliases:
     responsible_for: ["dev-pl", "PL-*"]
     aliases: ["jane", "jsmith"]
 ```
+
+`/etc/memorandum/secrets.yaml` spiegelt die Quellennamen aus dem Config oben:
+
+```yaml
+sources:
+  company_mattermost:
+    token: "PAT-paste-your-mattermost-token-here"
+  work_telegram:
+    token: "123456:AABBcc..."
+  work_pachca:
+    token: "your-pachca-token"
+```
+
+Um den Default-Pfad zu überschreiben (Tests / Dev / ohne sudo): `secrets_path:` in `config.yaml` setzen oder `MEMORANDUM_SECRETS_PATH` exportieren. Eine fehlende Datei ist okay — Konnektoren, die ein Credential brauchen, scheitern dann mit klarer Fehlermeldung beim Connect.
+
+#### Warum eine separate secrets-Datei
+
+Der MCP-Server läuft als du und kann alles lesen, was dein User darf. Der **Agent** (Claude Desktop, Claude Code, jeder filesystem-fähige MCP-Client) ist normalerweise auf das Projekt- / Home-Verzeichnis sandboxed. Wenn die Credentials unter `/etc/` liegen, sind sie physisch außerhalb dieser Allowlist — ein fehl­geleitetes oder zukünftiges Filesystem-Tool greppt sie nicht, und ein Path-Traversal vom Agenten kommt nicht aus seiner Sandbox raus. Das ist keine UNIX-Permission-Grenze, sondern die Sandbox-Grenze — aber genau die respektiert der Agent tatsächlich.
 
 Tipp: Nach ein paar Wochen Ingest `./bin/memorandum aliases refresh` ausführen — das druckt Stub-Einträge für jeden Absender, der noch nicht in `user_aliases` steht, sortiert nach Nachrichtenanzahl und mit der Quelle markiert, aus der er kommt. Die interessanten Einträge einfügen und `role`/`team`/`internal` von Hand ergänzen.
 
@@ -210,8 +241,9 @@ Aktualisiert sich alle 5 Sekunden; mit `q` verlassen.
 
 ```
 memorandum/
-├── config.yaml              # Zugangsdaten und Einstellungen (gitignored)
+├── config.yaml              # nicht-sensible Einstellungen (Quellen, Filter, Aliases) — gitignored
 ├── config.example.yaml      # Beispielkonfiguration
+├── secrets.example.yaml     # Vorlage für /etc/memorandum/secrets.yaml (chmod 600; im Repo — enthält keine echten Credentials)
 ├── requirements.txt         # Python-Abhängigkeiten
 ├── requirements-dev.txt     # Dev-Abhängigkeiten (pytest, pytest-cov, responses)
 │

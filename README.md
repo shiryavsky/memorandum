@@ -72,7 +72,20 @@ The default embedding model is multilingual — works well for English out of th
 
 ### 3. Configure
 
-Edit `config.yaml` (created in step 2 from `config.example.yaml`) and add your sources:
+Configuration lives in two files:
+
+- **`config.yaml`** (in the project dir, gitignored) — structure, filters, aliases, retention.
+- **`/etc/memorandum/secrets.yaml`** (`chmod 600`) — per-source tokens / passwords. Kept outside the project tree so a filesystem-capable agent sandboxed to `~/` can't read it. See [Why a separate secrets file](#why-a-separate-secrets-file) below.
+
+**Set up the secrets file once:**
+
+```bash
+sudo mkdir -p /etc/memorandum
+sudo install -m 600 -o "$USER" secrets.example.yaml /etc/memorandum/secrets.yaml
+sudo "$EDITOR" /etc/memorandum/secrets.yaml
+```
+
+Then edit `config.yaml` (created in step 2 from `config.example.yaml`) and add your sources:
 
 ```yaml
 sources:
@@ -80,7 +93,7 @@ sources:
     type: mattermost
     enabled: true
     url: "https://mattermost.yourcompany.com"
-    token: "your-personal-access-token"   # Account Settings → Security
+    # token comes from /etc/memorandum/secrets.yaml
     internal: true                        # senders here are company staff (external ones get an [external] tag)
     allow_send: false                     # default; set true to let the send_message tool post here
     filters:
@@ -93,12 +106,12 @@ sources:
   work_telegram:
     type: telegram
     enabled: true
-    token: "123456:AABBcc..."   # from @BotFather
+    # token comes from secrets.yaml — bot from @BotFather
 
   work_pachca:
     type: pachca
     enabled: true
-    token: "your-personal-access-token"   # Automations → API in Pachca settings
+    # token comes from secrets.yaml — Automations → API in Pachca settings
     filters:
       skip_channels: ["random"]
 
@@ -125,6 +138,24 @@ user_aliases:
     responsible_for: ["dev-pl", "PL-*"]
     aliases: ["jane", "jsmith"]
 ```
+
+`/etc/memorandum/secrets.yaml` mirrors the source names you declared above:
+
+```yaml
+sources:
+  company_mattermost:
+    token: "PAT-paste-your-mattermost-token-here"
+  work_telegram:
+    token: "123456:AABBcc..."
+  work_pachca:
+    token: "your-pachca-token"
+```
+
+To override the default secrets path (tests / dev / no-sudo environments), set `secrets_path:` in `config.yaml` or export `MEMORANDUM_SECRETS_PATH`. A missing file is fine — connectors that need a credential will fail with a clear error at connect-time.
+
+#### Why a separate secrets file
+
+The MCP server runs as you and can read anywhere you can. The **agent** (Claude Desktop, Claude Code, any filesystem-capable MCP client you have wired in) is typically allowlisted to the project / home directory by its own sandbox. Putting credentials under `/etc/` means they're physically outside that allowlist — a misbehaving or future filesystem tool can't grep them, and the agent's own path-traversal can't escape its sandbox. This is a harness boundary, not a UNIX-permissions one, but it's the boundary the agent actually respects.
 
 Tip: after a few weeks of ingest, run `./bin/memorandum aliases refresh` to print stub entries for every sender not yet in `user_aliases`, sorted by message count and tagged with the source they came from. Paste the ones you care about and add `role`/`team`/`internal` by hand.
 
@@ -210,8 +241,9 @@ Refreshes every 5 seconds; quit with `q`.
 
 ```
 memorandum/
-├── config.yaml              # Credentials and settings (gitignored)
+├── config.yaml              # Non-sensitive settings (sources, filters, aliases) — gitignored
 ├── config.example.yaml      # Example configuration
+├── secrets.example.yaml     # Template for /etc/memorandum/secrets.yaml (chmod 600; not gitignored — has no real credentials)
 ├── requirements.txt         # Python dependencies
 ├── requirements-dev.txt     # Dev dependencies (pytest, pytest-cov, responses)
 │

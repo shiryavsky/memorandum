@@ -88,12 +88,17 @@ All output includes permalinks (only for Telegram channel/supergroup chats — p
 
 ## Configuration
 
+Configuration lives in **two files**:
+
+- `config.yaml` (in the project tree, gitignored) — non-sensitive structure: sources, filters, retention, user_aliases, etc.
+- A secrets file (default `/etc/memorandum/secrets.yaml`, `chmod 600`) — per-source `token` / `password`. Override the path via `secrets_path:` in `config.yaml` or `MEMORANDUM_SECRETS_PATH`. The loader shallow-merges `secrets.sources[name]` into `config.sources[name]` so credentials live outside the agent's filesystem allowlist while everything else stays in the project tree. A missing secrets file is fine — connectors that need a credential fail at connect-time with a clear error. Unknown source names in the secrets file are logged + ignored (typo defense).
+
 `config.yaml` uses a `sources:` dictionary. Each entry has:
-- `type`: `mattermost`, `telegram`, or `pachca`
+- `type`: `mattermost`, `telegram`, `pachca`, or `email`
 - `enabled`: `true`/`false`
 - `internal`: optional `true` — every sender from this source is a company/internal user
 - `allow_send`: optional `true` (default `false`) — gates the `send_message` tool; default-deny
-- `url` (Mattermost only) and `token` (all types)
+- `url` (Mattermost only) — host/port/username (Email) — credentials (`token` / `password`) live in the secrets file, not here
 - `filters`: per-source `skip_senders`, `skip_channels`, `only_channels`, `skip_patterns`
 
 Top-level keys: `sqlite_path`, `chroma_path`, `attachments_path`, `display_timezone`, `schedule_minutes`, `text_extensions`, `my_aliases`, `user_aliases`, `internal_domains` (list of bare email domains whose owners are treated as internal — promotes any sender/recipient whose email matches), `embedding` (optional model + tuning block — see README → "Swapping the embedding model"), `ingest` (optional concurrency block — `fetch_workers` and `max_fetch_workers`; see [Parallel fetch](#parallel-fetch) below), `youtrack` (optional: `base_url` + `project_prefixes` list — drives both message-URL classification and channel-name issue-id parsing via shared helpers in `pipeline.ingest`).

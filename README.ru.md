@@ -72,7 +72,20 @@ cd memorandum
 
 ### 3. Конфигурация
 
-Откройте `config.yaml` (создан в шаге 2 из `config.example.yaml`) и добавьте свои источники:
+Конфигурация лежит в двух файлах:
+
+- **`config.yaml`** (в директории проекта, в `.gitignore`) — структура, фильтры, алиасы, retention.
+- **`/etc/memorandum/secrets.yaml`** (`chmod 600`) — токены и пароли на каждый источник. Лежит вне дерева проекта, чтобы агенту с песочницей в `~/` (Claude Desktop / Claude Code / любой filesystem-MCP) физически некуда было их прочитать. См. [Зачем отдельный secrets-файл](#зачем-отдельный-secrets-файл) ниже.
+
+**Разовая настройка secrets-файла:**
+
+```bash
+sudo mkdir -p /etc/memorandum
+sudo install -m 600 -o "$USER" secrets.example.yaml /etc/memorandum/secrets.yaml
+sudo "$EDITOR" /etc/memorandum/secrets.yaml
+```
+
+Потом откройте `config.yaml` (создан в шаге 2 из `config.example.yaml`) и добавьте свои источники:
 
 ```yaml
 sources:
@@ -80,7 +93,7 @@ sources:
     type: mattermost
     enabled: true
     url: "https://mattermost.yourcompany.com"
-    token: "your-personal-access-token"   # Account Settings → Security
+    # token берётся из /etc/memorandum/secrets.yaml
     internal: true                        # отправители здесь — сотрудники компании (внешние получают метку [external])
     allow_send: false                     # по умолчанию; поставьте true, чтобы send_message мог постить сюда
     filters:
@@ -93,12 +106,12 @@ sources:
   work_telegram:
     type: telegram
     enabled: true
-    token: "123456:AABBcc..."   # от @BotFather
+    # token берётся из secrets.yaml — бот от @BotFather
 
   work_pachca:
     type: pachca
     enabled: true
-    token: "your-personal-access-token"   # Automations → API в настройках Pachca
+    # token берётся из secrets.yaml — Automations → API в настройках Pachca
     filters:
       skip_channels: ["random"]
 
@@ -125,6 +138,24 @@ user_aliases:
     responsible_for: ["dev-pl", "PL-*"]
     aliases: ["jane", "jsmith"]
 ```
+
+`/etc/memorandum/secrets.yaml` повторяет имена источников из конфига выше:
+
+```yaml
+sources:
+  company_mattermost:
+    token: "PAT-paste-your-mattermost-token-here"
+  work_telegram:
+    token: "123456:AABBcc..."
+  work_pachca:
+    token: "your-pachca-token"
+```
+
+Чтобы переопределить дефолтный путь (тесты / dev / без sudo), поставьте `secrets_path:` в `config.yaml` или экспортируйте `MEMORANDUM_SECRETS_PATH`. Если файла нет — ничего страшного: коннектор, которому нужен токен, упадёт с понятной ошибкой на этапе `connect`.
+
+#### Зачем отдельный secrets-файл
+
+MCP-сервер бегает под вами и читает всё, что доступно вашему пользователю. А **агент** (Claude Desktop, Claude Code, любой filesystem-capable MCP, прицепленный к клиенту) обычно посажен в песочницу — обычно в директорию проекта или в `~`. Когда credentials лежат под `/etc/`, они физически вне этого allowlist'а: посторонний или будущий filesystem-tool их не grep'нет, а path-traversal от агента не выходит за пределы своего корня. Это не UNIX-permissions, а граница песочницы — но именно её агент уважает.
 
 Совет: через пару недель ingest'а запустите `./bin/memorandum aliases refresh` — он напечатает stub-записи для каждого отправителя, которого ещё нет в `user_aliases`, отсортированные по количеству сообщений и помеченные источником. Вставьте нужные и проставьте `role`/`team`/`internal` руками.
 
@@ -210,8 +241,9 @@ mcp_servers:
 
 ```
 memorandum/
-├── config.yaml              # учётки и настройки (в gitignore)
+├── config.yaml              # не-секретные настройки (источники, фильтры, алиасы) — в gitignore
 ├── config.example.yaml      # пример конфига
+├── secrets.example.yaml     # шаблон для /etc/memorandum/secrets.yaml (chmod 600; в git — реальных credentials нет)
 ├── requirements.txt         # Python-зависимости
 ├── requirements-dev.txt     # dev-зависимости (pytest, pytest-cov, responses)
 │

@@ -1,8 +1,22 @@
 # Memorandum Message Collector Configuration
-# Keep this file out of version control (add to .gitignore)
+# Keep this file out of version control (add to .gitignore).
+#
+# This file holds non-sensitive structure (urls, filters, allow_send rules,
+# user_aliases, retention, etc.). Credentials live in a SEPARATE secrets file
+# outside the agent-reachable filesystem — see `secrets_path` below and
+# `secrets.example.yaml` for the shape.
 
 sqlite_path: "data/messages.db"
 chroma_path: "data/chroma"
+
+# Per-source credentials (tokens / passwords) live in this file, shallow-
+# merged into the `sources:` block below at load time. Default is
+# /etc/memorandum/secrets.yaml — kept outside ~/ so a filesystem-capable
+# agent / MCP tool sandboxed to the home directory can't read it. Override
+# here (e.g. for tests / dev) or via the MEMORANDUM_SECRETS_PATH env var.
+# A missing file is fine — connectors that need a credential will then fail
+# with a clear error at connect-time.
+# secrets_path: "/etc/memorandum/secrets.yaml"
 
 # Where message attachments live on disk. Despite the historical "cache" name in
 # code, this is durable storage — do NOT delete it:
@@ -36,15 +50,19 @@ embedding:
   batch_size: 1            # raise on GPU for throughput
   collection_name: "messages"
 
-# Named sources — each source is an independent connection with its own credentials and filters.
-# Multiple sources of the same type (e.g., two Mattermost instances) are fully supported.
-# Disable a source without removing it by setting enabled: false.
+# Named sources — each source is an independent connection with its own
+# filters. Multiple sources of the same type (e.g. two Mattermost instances)
+# are fully supported. Disable a source without removing it by setting
+# enabled: false.
+#
+# Credentials (token / password) for each source live in the secrets file —
+# see secrets.example.yaml. The source name here MUST match the name in the
+# secrets file for the merge to find them.
 sources:
   company_mattermost:
     type: mattermost
     enabled: true
     url: "https://mattermost.yourcompany.com"
-    token: "your-personal-access-token"
     internal: true    # all senders from this source are company staff (marked internal)
     allow_send: false # default; set true to let the send_message MCP tool post here (visible to others)
     filters:
@@ -62,7 +80,6 @@ sources:
     type: mattermost
     enabled: false
     url: "https://mattermost.client.com"
-    token: "another-token"
     filters:
       only_channels:
         - "project-alpha"
@@ -70,7 +87,7 @@ sources:
   work_telegram:
     type: telegram
     enabled: false
-    token: "123456:AABBccDDeeFFggHH..."   # from @BotFather
+    # bot from @BotFather; token lives in secrets.yaml
     filters:
       skip_senders:
         - "spambot"
@@ -79,7 +96,7 @@ sources:
   work_pachca:
     type: pachca
     enabled: false
-    token: "your-personal-access-token"   # Automations → API in Pachca settings
+    # personal access token (Automations → API in Pachca settings); lives in secrets.yaml
     filters:
       skip_channels:
         - "random"
@@ -97,7 +114,7 @@ sources:
     host: "imap.example.com"
     port: 993                              # IMAPS; plain IMAP is not exposed in v1
     username: "you@example.com"            # also used as the From address for drafts
-    password: "app-password-or-account-pwd"
+    # password lives in secrets.yaml
     # from_address: "you@example.com"     # override only if it differs from username
     folders:
       - "INBOX"
