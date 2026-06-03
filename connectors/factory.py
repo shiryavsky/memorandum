@@ -19,6 +19,7 @@ Returning ``None`` for an unknown ``source_type`` is the documented
 """
 from typing import Any, Optional
 
+from ._common import ConnectorProtocol
 from .email_connector import EmailConnector
 from .mattermost_connector import MattermostConnector
 from .pachca_connector import PachcaConnector
@@ -36,7 +37,7 @@ def build_connector(
     attachments_path: str = "data/attachments",
     youtrack_cfg: Optional[dict] = None,
     source_filters: Optional[dict] = None,
-):
+) -> Optional[ConnectorProtocol]:
     """Build a connector or return None if `source_type` is unknown.
 
     `db_callback` is the read-only sync-state lookup (typically
