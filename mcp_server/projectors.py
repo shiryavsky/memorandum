@@ -45,7 +45,13 @@ TOOL_ARG_PROJECTORS = {
     # Threads / digests: target id / limits, no content.
     "get_thread": lambda a: {"thread_id": a.get("thread_id"), "limit": a.get("limit")},
     "summarize_channel": lambda a: {"channel": a.get("channel"), "hours": a.get("hours")},
-    "summarize_messages": lambda a: {"hours": a.get("hours"), "since": a.get("since")},
+    "summarize_messages": lambda a: {
+        "hours": a.get("hours"),
+        "days": a.get("days"),
+        "since": a.get("since"),
+        "source": a.get("source"),
+        "channel": a.get("channel"),
+    },
 }
 
 
