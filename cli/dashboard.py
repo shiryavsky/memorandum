@@ -442,8 +442,12 @@ def _panel_mentions(snap: dict, tz: ZoneInfo) -> Panel:
 
 # ── layout construction ─────────────────────────────────────────────────────
 
+_TOPS_MIN_HEIGHT = 50  # below this, the 12-line tops row crowds out Latest
+
+
 def _full_layout(snap: dict, started: float, refresh: int,
-                 config_path: str, tz: ZoneInfo) -> Layout:
+                 config_path: str, tz: ZoneInfo,
+                 *, show_tops: bool = True) -> Layout:
     layout = Layout()
     # Row sizing rationale:
     #   row2 (top-N tables) and row4 (charts) hold the panels with the most
@@ -451,14 +455,18 @@ def _full_layout(snap: dict, started: float, refresh: int,
     #   clipping. row3 (source_health + mentions) compresses to just what it
     #   needs. `latest` has no `size` — it absorbs all remaining vertical
     #   space, which is what makes the panel actually grow on a tall terminal.
-    layout.split_column(
-        Layout(name="header", size=3),
-        Layout(name="row1",   size=11),
-        Layout(name="row2",   size=12),
+    #   row2 is skipped on terminals shorter than _TOPS_MIN_HEIGHT — the tops
+    #   would otherwise leave only a handful of lines for Latest.
+    rows = [Layout(name="header", size=3),
+            Layout(name="row1",   size=11)]
+    if show_tops:
+        rows.append(Layout(name="row2", size=12))
+    rows.extend([
         Layout(name="row3",   size=9),
         Layout(name="row4",   size=9),
         Layout(name="latest"),
-    )
+    ])
+    layout.split_column(*rows)
     layout["header"].update(_panel_header(snap, started, refresh, config_path, tz))
 
     layout["row1"].split_row(
@@ -467,15 +475,16 @@ def _full_layout(snap: dict, started: float, refresh: int,
         Layout(_panel_send(snap),        name="send",    ratio=1),
         Layout(_panel_tool_usage(snap),  name="tools",   ratio=2),
     )
-    # row2 — Top channels and Top senders, one panel per time window.
-    # Equal ratios so 24h and 7d get the same horizontal budget; the 7d list
-    # is no longer hidden under the 24h list inside a single cramped panel.
-    layout["row2"].split_row(
-        Layout(_panel_top_channels_d1(snap), ratio=1),
-        Layout(_panel_top_channels_d7(snap), ratio=1),
-        Layout(_panel_top_senders_d1(snap),  ratio=1),
-        Layout(_panel_top_senders_d7(snap),  ratio=1),
-    )
+    if show_tops:
+        # row2 — Top channels and Top senders, one panel per time window.
+        # Equal ratios so 24h and 7d get the same horizontal budget; the 7d list
+        # is no longer hidden under the 24h list inside a single cramped panel.
+        layout["row2"].split_row(
+            Layout(_panel_top_channels_d1(snap), ratio=1),
+            Layout(_panel_top_channels_d7(snap), ratio=1),
+            Layout(_panel_top_senders_d1(snap),  ratio=1),
+            Layout(_panel_top_senders_d7(snap),  ratio=1),
+        )
     layout["row3"].split_row(
         Layout(_panel_source_health(snap, tz), ratio=1),
         Layout(_panel_mentions(snap, tz),      ratio=1),
@@ -509,7 +518,8 @@ def _render(snap: dict, started: float, refresh: int,
     """Pick full vs compact layout based on terminal size."""
     if console.size.width < 100 or console.size.height < 30:
         return _compact_layout(snap, started, refresh, config_path, tz)
-    return _full_layout(snap, started, refresh, config_path, tz)
+    return _full_layout(snap, started, refresh, config_path, tz,
+                        show_tops=console.size.height >= _TOPS_MIN_HEIGHT)
 
 
 # ── entry point ─────────────────────────────────────────────────────────────
