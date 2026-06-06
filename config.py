@@ -99,6 +99,7 @@ def get_aliases(config: dict) -> tuple[list[dict], list[str]]:
 
 
 _DEFAULT_MAX_FETCH_WORKERS = 8
+_DEFAULT_LOOKBACK_MINUTES = 75
 
 
 def get_ingest_settings(config: dict) -> dict:
@@ -110,6 +111,11 @@ def get_ingest_settings(config: dict) -> dict:
 
     `max_fetch_workers`: hard ceiling on the auto path, so a 30-source config
     doesn't open 30 concurrent HTTP fan-outs. Defaults to 8.
+
+    `lookback_minutes`: how far back to scan for new channels (no saved state)
+    and for ``--force`` runs. Sized to comfortably overlap the systemd timer
+    cadence so a run that starts late still covers the previous window;
+    default 75 = 15-min cadence + 1h safety buffer.
     """
     block = config.get("ingest") or {}
     raw_workers = block.get("fetch_workers")
@@ -124,7 +130,15 @@ def get_ingest_settings(config: dict) -> dict:
         max_workers = max(1, int(block.get("max_fetch_workers", _DEFAULT_MAX_FETCH_WORKERS)))
     except (TypeError, ValueError):
         max_workers = _DEFAULT_MAX_FETCH_WORKERS
-    return {"fetch_workers": fetch_workers, "max_fetch_workers": max_workers}
+    try:
+        lookback_minutes = max(1, int(block.get("lookback_minutes", _DEFAULT_LOOKBACK_MINUTES)))
+    except (TypeError, ValueError):
+        lookback_minutes = _DEFAULT_LOOKBACK_MINUTES
+    return {
+        "fetch_workers": fetch_workers,
+        "max_fetch_workers": max_workers,
+        "lookback_minutes": lookback_minutes,
+    }
 
 
 _DEFAULT_ALIAS_EDIT_SETTINGS = {

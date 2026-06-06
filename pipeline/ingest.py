@@ -378,6 +378,7 @@ def run_ingest(
         Dictionary with ingest statistics.
     """
     config = load_config(config_path)
+    ingest_settings = get_ingest_settings(config)
     db = Database(config["sqlite_path"])
     vs = VectorStore(config["chroma_path"], embedding=config.get("embedding"))
     text_extensions = set(config.get("text_extensions", [".txt", ".md", ".log", ".json", ".lst"]))
@@ -418,14 +419,14 @@ def run_ingest(
             return stats
 
         if since is None:
-            since = datetime.now(timezone.utc) - timedelta(minutes=20)
+            since = datetime.now(timezone.utc) - timedelta(minutes=ingest_settings["lookback_minutes"])
         since_ms = int(since.timestamp() * 1000)
         logger.info(f"Scanning sources since {since} ({since_ms})")
 
         all_messages = _collect_messages(
             connectors,
             since=since, force=force, since_ms=since_ms,
-            ingest_settings=get_ingest_settings(config),
+            ingest_settings=ingest_settings,
             stats=stats, source_errors=source_errors,
         )
         if not all_messages:
@@ -601,8 +602,9 @@ def main(args=None):
 
     parser = argparse.ArgumentParser(description="Run message ingest pipeline")
     parser.add_argument(
-        "--hours", type=float, default=0.33,
-        help="Hours back to fetch for new channels or when --force is used (default: 0.33 = ~20 minutes)"
+        "--hours", type=float, default=None,
+        help="Hours back to fetch for new channels or when --force is used "
+             "(default: ingest.lookback_minutes from config, normally 75 minutes)"
     )
     parser.add_argument("--config", default="config.yaml", help="Path to config file")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
@@ -615,7 +617,11 @@ def main(args=None):
     if parsed_args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    since = datetime.now(timezone.utc) - timedelta(hours=parsed_args.hours)
+    since = (
+        datetime.now(timezone.utc) - timedelta(hours=parsed_args.hours)
+        if parsed_args.hours is not None
+        else None
+    )
     stats = run_ingest(since=since, config_path=parsed_args.config, force=parsed_args.force)
 
     print(f"\n{'='*50}")

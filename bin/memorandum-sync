@@ -5,8 +5,9 @@
 # This script is meant to be run by systemd timer or manually.
 # It acquires a lock to prevent overlapping runs.
 #
-# When called without --hours, calculates from schedule_minutes config.
-# When called with --hours, uses that value directly (for manual runs).
+# When called without --hours, the Python CLI falls back to
+# `ingest.lookback_minutes` from config.yaml (default 75 minutes).
+# When called with --hours, that value is passed through verbatim.
 
 set -euo pipefail
 
@@ -84,27 +85,12 @@ if [ ! -d ".venv" ]; then
     exit 1
 fi
 
-# Extract schedule_minutes from config.yaml (default to 15)
-SCHEDULE_MINUTES=$(python3 -c "
-import yaml
-try:
-    with open('$CONFIG_PATH') as f:
-        config = yaml.safe_load(f)
-    print(config.get('schedule_minutes', 15))
-except Exception:
-    print(15)
-" 2>/dev/null || echo "15")
-
-log "Schedule interval: ${SCHEDULE_MINUTES} minutes"
 log "Config: $CONFIG_PATH"
 
-# Calculate hours if not specified
-if [ -z "${HOURS:-}" ]; then
-    # Auto-calculate: use 2x schedule interval to avoid gaps
-    HOURS=$(python3 -c "print($SCHEDULE_MINUTES * 2 / 60.0)" 2>/dev/null || echo "0.5")
-    log "Hours: auto (${HOURS} hours based on schedule)"
+if [ -n "${HOURS:-}" ]; then
+    log "Hours: $HOURS (manual override)"
 else
-    log "Hours: $HOURS (manual)"
+    log "Hours: auto (Python CLI uses ingest.lookback_minutes from config)"
 fi
 
 # Prevent HuggingFace model checks if model is cached
@@ -157,10 +143,17 @@ fi
 # Cleanup on exit
 trap release_lock EXIT INT TERM
 
-# Run ingest
-log "Fetching messages from last ${HOURS} hours..."
+# Run ingest. Only pass --hours when the caller asked for a manual override;
+# otherwise let the Python CLI fall back to ingest.lookback_minutes.
+HOURS_ARG=()
+if [ -n "${HOURS:-}" ]; then
+    HOURS_ARG=(--hours "$HOURS")
+    log "Fetching messages from last ${HOURS} hours..."
+else
+    log "Fetching messages using configured lookback..."
+fi
 
-if .venv/bin/python -m pipeline --hours "$HOURS" --config "$CONFIG_PATH" $FORCE; then
+if .venv/bin/python -m pipeline "${HOURS_ARG[@]}" --config "$CONFIG_PATH" $FORCE; then
     log "Sync completed successfully"
     exit 0
 else

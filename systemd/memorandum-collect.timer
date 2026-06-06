@@ -1,9 +1,8 @@
 # Memorandum Message Collector - Systemd Timer Unit
 # Deploy this file to: /etc/systemd/system/memorandum-collect.timer
 #
-# This timer triggers the ingest pipeline every 15 minutes (configurable).
-# The schedule_minutes value in config.yaml is NOT used here - 
-# edit this file to change the interval.
+# This timer triggers the ingest pipeline every 15 minutes.
+# Edit OnCalendar below to change the interval.
 #
 # Installation:
 #   sudo cp systemd/memorandum-collect.service /etc/systemd/system/

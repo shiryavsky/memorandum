@@ -196,8 +196,6 @@ youtrack:
   base_url: "https://youtrack.jetbrains.com/"
   project_prefixes: [PROJ, DEMO]
 
-schedule_minutes: 15
-
 # Data retention / housekeeping.
 # OPT-IN: housekeeping does nothing unless you uncomment the `retention:` block
 # below. After each successful ingest, it prunes `messages` / `mentions` /
@@ -230,19 +228,29 @@ schedule_minutes: 15
 #   prune_interval_hours: 24
 #   file_cache_grace_minutes: 60
 
-# Ingest concurrency. Each source's `fetch_messages` runs in its own thread —
-# fetches are I/O-bound (REST / IMAP roundtrips) so wall-clock = max(per-source
-# time) instead of sum. The enrich + insert + sender-cache passes that follow
-# stay strictly sequential (SQLite writes serialize at the file lock; the
-# embedding model isn't multi-thread-friendly).
+# Ingest concurrency + lookback window. Each source's `fetch_messages` runs in
+# its own thread — fetches are I/O-bound (REST / IMAP roundtrips) so wall-clock
+# = max(per-source time) instead of sum. The enrich + insert + sender-cache
+# passes that follow stay strictly sequential (SQLite writes serialize at the
+# file lock; the embedding model isn't multi-thread-friendly).
 #
 #   fetch_workers: 0 / null / unset  → auto (one per enabled source, capped)
 #   fetch_workers: 1                  → strictly sequential (legacy behavior)
 #   fetch_workers: N                  → fixed pool of N workers
 #   max_fetch_workers                 → hard cap on the auto path (default 8)
+#
+# `lookback_minutes` controls the default `since` window used for new channels
+# (no saved state yet) and for `--force` runs. Sized to comfortably overlap the
+# systemd timer cadence so a run that starts late still covers the previous
+# window. With the default 15-minute timer (`OnCalendar=*:0/15` in
+# `systemd/memorandum-collect.timer`), 75 = 15-min cadence + 1h safety buffer.
+# Override per-run with `python -m pipeline --hours N` if you ever need to.
+#
+#   lookback_minutes: 75              → default (15-min cadence + 1h overlap)
 # ingest:
 #   fetch_workers: 0
 #   max_fetch_workers: 8
+#   lookback_minutes: 75
 
 # Timezone for displaying message timestamps (storage is always UTC)
 # Use any IANA timezone name: "UTC", "Europe/Moscow", "Europe/Berlin", "US/Eastern", etc.
