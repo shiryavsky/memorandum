@@ -266,6 +266,6 @@ def build_dashboard_snapshot(db, vs, config: dict) -> dict:
         "hour_of_day_histogram": hour_of_day_histogram(db, days=14, tz_name=tz_name),
         "send_stats":      send_stats(db),
         "tool_call_stats": tool_call_stats(db),
-        "latest_messages": latest_messages(db, limit=15),
+        "latest_messages": latest_messages(db, limit=60),
         "mentions_me":     mentions_me(db),
     }

@@ -269,56 +269,47 @@ def _panel_source_health(snap: dict, tz: ZoneInfo) -> Panel:
     return Panel(t, title="Source health", border_style="cyan")
 
 
-def _table_top(rows: list[dict], key: str, count_key: str = "count") -> Table:
+def _table_top(rows: list[dict], key: str, count_key: str = "count",
+               with_marker: bool = False) -> Table:
+    """Single-window top-N table. `with_marker=True` prefixes each row with
+    ● (internal) / ○ (external) — used by the sender panels."""
     t = Table(show_header=True, header_style="bold", expand=True, pad_edge=False)
     t.add_column("#", justify="right", style="dim")
     t.add_column(key.title(), overflow="ellipsis")
     t.add_column("Cnt", justify="right")
     for i, r in enumerate(rows, 1):
-        t.add_row(str(i), str(r.get(key) or "-"), f"{r[count_key]:,}")
+        name = str(r.get(key) or "-")
+        if with_marker:
+            marker = "●" if r.get("internal") else "○"
+            name = f"{marker} {name}"
+        t.add_row(str(i), name, f"{r[count_key]:,}")
     if not rows:
         t.add_row("-", Text("(no activity)", style="dim"), "-")
     return t
 
 
-def _panel_top_channels(snap: dict) -> Panel:
-    return Panel(
-        Group(
-            Text("Last 24h", style="bold"),
-            _table_top(snap["top_channels_d1"][:5], "channel"),
-            Text(),
-            Text("Last 7d", style="bold"),
-            _table_top(snap["top_channels_d7"][:5], "channel"),
-        ),
-        title="Top channels", border_style="cyan",
-    )
+# Top panels are split per time-window so the 7d list isn't clipped by the 24h
+# list above it — each window gets its own panel with its own scroll budget.
+# `:10` per panel comfortably fills row2's ~12 visible rows.
+
+def _panel_top_channels_d1(snap: dict) -> Panel:
+    return Panel(_table_top(snap["top_channels_d1"][:10], "channel"),
+                 title="Top channels · 24h", border_style="cyan")
 
 
-def _panel_top_senders(snap: dict) -> Panel:
-    def _row_text(r):
-        marker = "●" if r.get("internal") else "○"
-        return f"{marker} {r.get('sender') or '-'}"
-    t1 = Table(show_header=True, header_style="bold", expand=True, pad_edge=False)
-    t1.add_column("#", justify="right", style="dim")
-    t1.add_column("Sender")
-    t1.add_column("Cnt", justify="right")
-    for i, r in enumerate(snap["top_senders_d1"][:5], 1):
-        t1.add_row(str(i), _row_text(r), f"{r['count']:,}")
-    if not snap["top_senders_d1"]:
-        t1.add_row("-", Text("(no activity)", style="dim"), "-")
-    t7 = Table(show_header=True, header_style="bold", expand=True, pad_edge=False)
-    t7.add_column("#", justify="right", style="dim")
-    t7.add_column("Sender")
-    t7.add_column("Cnt", justify="right")
-    for i, r in enumerate(snap["top_senders_d7"][:5], 1):
-        t7.add_row(str(i), _row_text(r), f"{r['count']:,}")
-    if not snap["top_senders_d7"]:
-        t7.add_row("-", Text("(no activity)", style="dim"), "-")
-    return Panel(
-        Group(Text("Last 24h", style="bold"), t1, Text(),
-              Text("Last 7d", style="bold"), t7),
-        title="Top senders", border_style="cyan",
-    )
+def _panel_top_channels_d7(snap: dict) -> Panel:
+    return Panel(_table_top(snap["top_channels_d7"][:10], "channel"),
+                 title="Top channels · 7d", border_style="cyan")
+
+
+def _panel_top_senders_d1(snap: dict) -> Panel:
+    return Panel(_table_top(snap["top_senders_d1"][:10], "sender", with_marker=True),
+                 title="Top senders · 24h", border_style="cyan")
+
+
+def _panel_top_senders_d7(snap: dict) -> Panel:
+    return Panel(_table_top(snap["top_senders_d7"][:10], "sender", with_marker=True),
+                 title="Top senders · 7d", border_style="cyan")
 
 
 def _panel_messages_per_day(snap: dict) -> Panel:
@@ -454,11 +445,18 @@ def _panel_mentions(snap: dict, tz: ZoneInfo) -> Panel:
 def _full_layout(snap: dict, started: float, refresh: int,
                  config_path: str, tz: ZoneInfo) -> Layout:
     layout = Layout()
+    # Row sizing rationale:
+    #   row2 (top-N tables) and row4 (charts) hold the panels with the most
+    #   intrinsic content height, so they're sized to fit cleanly without
+    #   clipping. row3 (source_health + mentions) compresses to just what it
+    #   needs. `latest` has no `size` — it absorbs all remaining vertical
+    #   space, which is what makes the panel actually grow on a tall terminal.
     layout.split_column(
         Layout(name="header", size=3),
         Layout(name="row1",   size=11),
         Layout(name="row2",   size=12),
         Layout(name="row3",   size=9),
+        Layout(name="row4",   size=9),
         Layout(name="latest"),
     )
     layout["header"].update(_panel_header(snap, started, refresh, config_path, tz))
@@ -469,18 +467,24 @@ def _full_layout(snap: dict, started: float, refresh: int,
         Layout(_panel_send(snap),        name="send",    ratio=1),
         Layout(_panel_tool_usage(snap),  name="tools",   ratio=2),
     )
+    # row2 — Top channels and Top senders, one panel per time window.
+    # Equal ratios so 24h and 7d get the same horizontal budget; the 7d list
+    # is no longer hidden under the 24h list inside a single cramped panel.
     layout["row2"].split_row(
-        Layout(_panel_source_health(snap, tz), ratio=2),
-        Layout(_panel_top_channels(snap),      ratio=2),
-        Layout(_panel_top_senders(snap),       ratio=2),
-        Layout(_panel_mentions(snap, tz),      ratio=3),
+        Layout(_panel_top_channels_d1(snap), ratio=1),
+        Layout(_panel_top_channels_d7(snap), ratio=1),
+        Layout(_panel_top_senders_d1(snap),  ratio=1),
+        Layout(_panel_top_senders_d7(snap),  ratio=1),
     )
     layout["row3"].split_row(
+        Layout(_panel_source_health(snap, tz), ratio=1),
+        Layout(_panel_mentions(snap, tz),      ratio=1),
+    )
+    layout["row4"].split_row(
         # ratio 3:2 — messages_per_day gets ~108 cols (fits 90 days at
         # 1 char/day with slack); hour_histogram gets ~72 cols (fits 24
-        # hours at 2 chars/hour with slack), roughly doubling its previous
-        # width.
-        Layout(_panel_messages_per_day(snap),  ratio=3),
+        # hours at 2 chars/hour with slack).
+        Layout(_panel_messages_per_day(snap),   ratio=3),
         Layout(_panel_hour_histogram(snap, tz), ratio=2),
     )
     layout["latest"].update(_panel_latest(snap, tz))
