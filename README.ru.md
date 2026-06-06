@@ -44,7 +44,7 @@ Memorandum работает локально — ваши сообщения и 
 - **Граф упоминаний** — `who_mentioned` отвечает на «кто пинговал меня / Алису на этой неделе» с разрешением алиасов
 
 **Эксплуатация**
-- **MCP-сервер** с инструментами для поиска, summarize, дайджеста, решений, тредов, поиска по issue и доступа к файлам
+- **MCP-сервер** с инструментами для поиска, summarize, дайджеста, тредов, поиска по issue и доступа к файлам
 - **Отправка ответов** (opt-in, по галке на источник) — поддерживаются Telegram business-чаты; ответы на письма уходят в папку Drafts на ревью
 - **Retention / housekeeping** — автоматическое удаление старых сообщений и векторов; content-addressed sweep вложений оставляет всё, на что ещё кто-то ссылается
 - **CLI**: `./bin/memorandum {health, dashboard, aliases refresh, prune, reindex-chroma}` — терминальный TUI и housekeeping-инструменты
@@ -373,7 +373,7 @@ pytest tests/ -v --tb=short
 pytest tests/ --cov=. --cov-report=term-missing --ignore=storage/vector_store.py
 ```
 
-Тестовый набор (~310 тестов) покрывает загрузку конфига, фильтрацию, SQLite-хранилище, генерацию MCP-URL и обработчики инструментов, все три коннектора (HTTP замокан через `responses`), оркестратор ingest'а (VectorStore замокан — модель BGE-M3 не грузится), CLI-диспетчер и round-trip `aliases refresh` через `ruamel.yaml`.
+Тестовый набор (~640 тестов) покрывает загрузку конфига и secrets-файла, фильтрацию, SQLite-хранилище (потокобезопасность через RLock), генерацию MCP-URL и обработчики инструментов, все четыре коннектора (HTTP / IMAP замоканы) плюс контракт `ConnectorProtocol`, оркестратор ingest'а (VectorStore замокан — модель BGE-M3 не грузится), CLI-диспетчер и round-trip `aliases refresh` через `ruamel.yaml`.
 
 ## Опции ingest'а
 

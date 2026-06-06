@@ -44,7 +44,7 @@ Memorandum runs locally — your messages and attachments never leave your machi
 - **Mention graph** — `who_mentioned` answers "who pinged me / Alice this week" with alias resolution
 
 **Operations**
-- **MCP server** with tools for search, summarize, digest, decisions, threads, issue lookup, and file access
+- **MCP server** with tools for search, summarize, digest, threads, issue lookup, and file access
 - **Send back** (opt-in, per-source gate) — Telegram business chats supported; email replies land in your Drafts folder for review
 - **Retention / housekeeping** — automatic pruning of old messages + vectors; content-addressed attachment sweep keeps anything still referenced
 - **CLI**: `./bin/memorandum {health, dashboard, aliases refresh, prune, reindex-chroma}` — live terminal TUI plus housekeeping tools
@@ -373,7 +373,7 @@ pytest tests/ -v --tb=short
 pytest tests/ --cov=. --cov-report=term-missing --ignore=storage/vector_store.py
 ```
 
-The test suite (~310 tests) covers config loading, filtering, SQLite storage, MCP URL generation and tool handlers, all three connectors (HTTP mocked via `responses`), the ingest orchestrator (VectorStore mocked — no BGE-M3 model loaded), the CLI dispatcher, and the `aliases refresh` round-trip through `ruamel.yaml`.
+The test suite (~640 tests) covers config + secrets loading, filtering, SQLite storage (RLock thread safety), MCP URL generation and tool handlers, all four connectors (HTTP / IMAP mocked) plus the `ConnectorProtocol` contract, the ingest orchestrator (VectorStore mocked — no BGE-M3 model loaded), the CLI dispatcher, and the `aliases refresh` round-trip through `ruamel.yaml`.
 
 ## Ingest Options
 
