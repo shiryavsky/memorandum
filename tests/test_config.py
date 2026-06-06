@@ -167,7 +167,7 @@ def test_get_internal_domains_drops_empty_and_none_entries():
 
 def test_get_ingest_settings_defaults():
     s = get_ingest_settings({})
-    assert s == {"fetch_workers": None, "max_fetch_workers": 8}
+    assert s == {"fetch_workers": None, "max_fetch_workers": 8, "lookback_minutes": 75}
 
 
 def test_get_ingest_settings_explicit_workers_passed_through():
@@ -203,6 +203,21 @@ def test_get_ingest_settings_max_workers_override():
 def test_get_ingest_settings_garbage_max_workers_falls_back():
     s = get_ingest_settings({"ingest": {"max_fetch_workers": "infinity"}})
     assert s["max_fetch_workers"] == 8
+
+
+def test_get_ingest_settings_lookback_explicit():
+    s = get_ingest_settings({"ingest": {"lookback_minutes": 30}})
+    assert s["lookback_minutes"] == 30
+
+
+def test_get_ingest_settings_lookback_clamped_to_one():
+    s = get_ingest_settings({"ingest": {"lookback_minutes": 0}})
+    assert s["lookback_minutes"] == 1
+
+
+def test_get_ingest_settings_garbage_lookback_falls_back():
+    s = get_ingest_settings({"ingest": {"lookback_minutes": "soon"}})
+    assert s["lookback_minutes"] == 75
 
 
 # ── get_alias_edit_settings ────────────────────────────────────────
