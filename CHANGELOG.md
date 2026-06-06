@@ -11,6 +11,46 @@ This document captures the WHY that doesn't fit in commit messages.
 
 ---
 
+## Ingest lookback becomes an explicit `ingest.lookback_minutes` knob
+
+The default `since` window used by new channels (no saved state yet) and
+by `--force` runs is now a single config value: `ingest.lookback_minutes`
+(default **75** = 15-min systemd timer cadence + 1h safety overlap, so a
+run that starts late still covers the previous window).
+
+- **Why.** The lookback was previously decided in two non-obvious places.
+  `bin/memorandum-sync` extracted `schedule_minutes` from `config.yaml`
+  and computed `HOURS = schedule_minutes * 2 / 60` (→ ~30 min); Python's
+  `run_ingest` had its own hardcoded 20-min `timedelta` fallback if
+  `since` wasn't passed; the CLI's `--hours` default was `0.33`. Three
+  numbers that all meant "the default lookback," only one of which the
+  operator could change from `config.yaml` — and that key (`schedule_minutes`)
+  wasn't even read by any Python code, so most callers were already on
+  the 20-min path. One knob, one number, one place.
+- **Why 75 and not 30.** The previous ~30-min effective default left
+  almost no margin — a systemd run that started 20 minutes late
+  (load, lock contention, network blip) would already be skating the
+  edge of the prior window. 1h of overlap on top of the 15-min cadence
+  is cheap (connectors dedupe on `db.exists`, so re-fetched messages
+  are dropped before insert) and survives realistic operational delays.
+- **Why a CLI override stayed.** `python -m pipeline --hours N` still
+  wins when set — useful for backfills and one-off debugging. When
+  unset, the CLI passes `since=None` to `run_ingest`, which then
+  resolves from the config.
+
+Touchpoints: `config.py` (`get_ingest_settings` returns
+`lookback_minutes`, min-clamped to 1, falls back to 75 on bogus
+values), `pipeline/ingest.py` (single fallback site reads
+`ingest_settings["lookback_minutes"]`; CLI `--hours` default is now
+`None` so config wins), `bin/memorandum-sync` (dropped the
+`schedule_minutes` extraction and the `* 2` math; only forwards
+`--hours` when the operator sets it), `config.example.yaml` (new
+`lookback_minutes: 75` line in the `ingest:` block with the rationale),
+`AGENTS.md` (top-level key list updated), `systemd/memorandum-collect.timer`
+(stale "schedule_minutes is NOT used here" warning removed).
+
+---
+
 ## Credentials move out of `config.yaml` into `/etc/memorandum/secrets.yaml`
 
 **Breaking change.** Per-source tokens / passwords are no longer kept
