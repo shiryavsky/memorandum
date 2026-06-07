@@ -32,6 +32,16 @@ from pathlib import Path
 # BEFORE any `from connectors. / pipeline. / storage. / config` imports.
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# When launched as `__main__` (script invocation or `python -m
+# mcp_server.server`), self-register under the canonical name. The
+# `tools.channels -> from mcp_server import server as _srv` import
+# below otherwise re-executes this file under `mcp_server.server` and
+# hits the half-initialized `from mcp_server.tools import TOOL_HANDLERS`
+# below — the load-order trick in this module's docstring only works
+# when server.py is *first* loaded under its real name.
+if __name__ == "__main__":
+    sys.modules.setdefault("mcp_server.server", sys.modules[__name__])
+
 import asyncio
 from typing import Optional
 
