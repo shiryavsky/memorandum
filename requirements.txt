@@ -2,7 +2,7 @@
 requests==2.33.1
 chromadb==1.5.8
 FlagEmbedding==1.4.0
-mcp==1.27.0
+mcp==1.28.1
 imap_tools==1.13.0
 pyyaml==6.0.3
 ruamel.yaml==0.19.1       # comment-preserving YAML for `memorandum aliases refresh --in-place`
